@@ -1,0 +1,26 @@
+# Environments
+.env
+.env*.local
+
+# Python venv and cache
+backend/venv/
+backend/.pytest_cache/
+__pycache__/
+*.pyc
+
+# Local databases
+backend/medtech.db
+
+# Node dependencies and build
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# IDE / System files
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
