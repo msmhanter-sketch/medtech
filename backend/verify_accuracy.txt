@@ -1,0 +1,16 @@
+=== VERIFY ACCURACY ===
+
+--- Общий анализ крови ---
+  INVITRO: live=520 db=520 OK
+  HELIX: live=1310 db=1120 MISMATCH
+  KDL Алматы: live=None db=None MISMATCH
+--- СОЭ ---
+  INVITRO: live=1200 db=1200 OK
+  HELIX: live=1250 db=1250 OK
+  KDL Алматы: live=None db=None MISMATCH
+--- Глюкоза ---
+  INVITRO: live=1700 db=930 MISMATCH
+  HELIX: live=1690 db=900 MISMATCH
+  KDL Алматы: live=19040 db=None MISMATCH
+
+Итого: 3 OK, 6 расхождений

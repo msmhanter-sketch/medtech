@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import {
   MapPin,
   Star,
@@ -10,8 +11,13 @@ import {
   Calendar,
   TrendingDown,
   TrendingUp,
+  Clock,
+  Bell,
+  Navigation,
 } from "lucide-react";
-import { ClinicInCompare, formatPrice, formatRating } from "@/lib/api";
+import { ClinicInCompare, formatPrice, formatRating, api } from "@/lib/api";
+import { build2gisRouteUrl, build2gisAppUrl, buildGoogleMapsRouteUrl, buildSourceUrl } from "@/lib/maps";
+import { motion } from "framer-motion";
 import { useState } from "react";
 
 interface ClinicCardProps {
@@ -20,11 +26,17 @@ interface ClinicCardProps {
   minPrice: number | null;
   maxPrice: number | null;
   onBook?: () => void;
+  serviceId?: number;
+  city?: string;
 }
 
-export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }: ClinicCardProps) {
+export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, serviceId, city }: ClinicCardProps) {
   const isCheapest = clinic.is_cheapest;
   const [logoHovered, setLogoHovered] = useState(false);
+  const [showSubscribe, setShowSubscribe] = useState(false);
+  const [subscribeEmail, setSubscribeEmail] = useState("");
+  const [subscribed, setSubscribed] = useState(false);
+  const sourceUrl = buildSourceUrl(clinic);
 
   // Разница цен в процентах относительно минимума
   const priceDiff =
@@ -45,7 +57,10 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
   });
 
   return (
-    <article
+    <motion.article
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: Math.min(rank * 0.05, 0.5), duration: 0.4, ease: "easeOut" }}
       id={`clinic-card-${clinic.id}`}
       className={isCheapest ? "card-featured" : "card"}
       onMouseEnter={() => setLogoHovered(true)}
@@ -75,7 +90,7 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
             fontSize: 11,
             fontWeight: 700,
             color: isCheapest ? "var(--accent)" : "var(--text-muted)",
-            background: isCheapest ? "rgba(99,91,255,0.06)" : "transparent",
+            background: isCheapest ? "rgba(13, 148, 136,0.06)" : "transparent",
             flexShrink: 0,
             marginTop: 2,
           }}
@@ -100,7 +115,7 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
             transition: "all 0.35s cubic-bezier(0.16, 1, 0.3, 1)",
             transform: logoHovered ? "scale(1.05) translateY(-1px)" : "scale(1) translateY(0)",
             borderColor: logoHovered ? "var(--accent)" : "var(--border)",
-            boxShadow: logoHovered ? "0 4px 12px rgba(99,91,255,0.08)" : "none",
+            boxShadow: logoHovered ? "0 4px 12px rgba(13, 148, 136,0.08)" : "none",
           }}
         >
           {clinic.logo_url ? (
@@ -108,7 +123,7 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
               src={clinic.logo_url}
               alt={`Логотип ${clinic.name}`}
               fill
-              style={{ objectFit: "cover" }}
+              style={{ objectFit: "contain", padding: "4px" }}
               unoptimized
             />
           ) : (
@@ -140,19 +155,22 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
               </span>
             )}
           </div>
-          <h3
+          <Link
+            href={`/clinics/${clinic.id}`}
             style={{
               fontSize: 15,
-              fontWeight: 700, // Жирнее в стиле Stripe
+              fontWeight: 700,
               color: "var(--text-primary)",
               letterSpacing: "-0.015em",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              display: "block",
+              textDecoration: "none",
             }}
           >
             {clinic.name}
-          </h3>
+          </Link>
           {clinic.rating && (
             <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
               <Star
@@ -163,6 +181,23 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
                 {formatRating(clinic.rating)}
               </span>
               <span style={{ fontSize: 11, color: "var(--text-muted)" }}>/5</span>
+              {clinic.distance_km != null && (
+                <>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6, marginRight: 6 }}>•</span>
+                  <MapPin size={12} style={{ color: "var(--text-muted)" }} />
+                  <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>
+                    {clinic.distance_km} км
+                  </span>
+                </>
+              )}
+            </div>
+          )}
+          {!clinic.rating && clinic.distance_km != null && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 4 }}>
+              <MapPin size={12} style={{ color: "var(--text-muted)" }} />
+              <span style={{ fontSize: 12, color: "var(--text-secondary)", fontWeight: 500 }}>
+                {clinic.distance_km} км
+              </span>
             </div>
           )}
         </div>
@@ -188,6 +223,12 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
           >
             {formatPrice(clinic.price_kzt)}
           </p>
+          
+          {clinic.duration_days !== undefined && clinic.duration_days !== null && (
+            <p style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4, fontWeight: 550 }}>
+              Срок: {clinic.duration_days === 0 ? "в тот же день" : `${clinic.duration_days} дн.`}
+            </p>
+          )}
           
           {priceDiff !== null && (
             <p
@@ -256,6 +297,13 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
           <span style={{ lineHeight: 1.45 }}>{clinic.address}</span>
         </div>
 
+        {clinic.working_hours && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
+            <Clock size={13} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
+            <span>Режим работы: {clinic.working_hours}</span>
+          </div>
+        )}
+
         {clinic.phone && (
           <a
             href={`tel:${clinic.phone}`}
@@ -277,9 +325,85 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
             {clinic.phone}
           </a>
         )}
+
+        {sourceUrl && (
+          <a
+            href={sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 12,
+              color: "var(--accent)",
+              textDecoration: "none",
+              width: "fit-content",
+            }}
+          >
+            <ExternalLink size={12} />
+            Источник прайса
+          </a>
+        )}
+
+        {clinic.latitude != null && clinic.longitude != null && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <a
+              href={build2gisRouteUrl(clinic.latitude, clinic.longitude, city || clinic.city)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 11, color: "var(--text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <Navigation size={11} /> 2GIS
+            </a>
+            <a
+              href={build2gisAppUrl(clinic.latitude, clinic.longitude)}
+              style={{ fontSize: 11, color: "var(--text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <Navigation size={11} /> 2GIS app
+            </a>
+            <a
+              href={buildGoogleMapsRouteUrl(clinic.latitude, clinic.longitude)}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ fontSize: 11, color: "var(--text-secondary)", textDecoration: "none", display: "inline-flex", alignItems: "center", gap: 4 }}
+            >
+              <Navigation size={11} /> Google Maps
+            </a>
+          </div>
+        )}
       </div>
 
       {/* ── Actions Row ─────────────────────────────────────────────── */}
+      {showSubscribe && serviceId && !subscribed && (
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              const res = await api.subscribeToPrice(subscribeEmail, serviceId, clinic.id, city || clinic.city);
+              setSubscribed(true);
+              setShowSubscribe(false);
+              alert(res.message);
+            } catch (err) {
+              alert(err instanceof Error ? err.message : "Ошибка подписки");
+            }
+          }}
+          style={{ display: "flex", gap: 6, marginBottom: 10 }}
+        >
+          <input
+            type="email"
+            required
+            placeholder="Email для уведомлений"
+            value={subscribeEmail}
+            onChange={(e) => setSubscribeEmail(e.target.value)}
+            style={{ flex: 1, fontSize: 12, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}
+          />
+          <button type="submit" className="btn-solid" style={{ padding: "8px 12px", fontSize: 12 }}>OK</button>
+        </form>
+      )}
+      {subscribed && (
+        <p style={{ fontSize: 11, color: "var(--accent-green)", marginBottom: 8 }}>✓ Подписка на изменение цены активна</p>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 20 }}>
         <button
           onClick={onBook}
@@ -299,7 +423,7 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
           onMouseEnter={(e) => {
             if (!isCheapest) {
               (e.currentTarget as HTMLElement).style.borderColor = "var(--accent)";
-              (e.currentTarget as HTMLElement).style.background = "rgba(99, 91, 255, 0.04)";
+              (e.currentTarget as HTMLElement).style.background = "rgba(13, 148, 136, 0.04)";
               (e.currentTarget as HTMLElement).style.transform = "translateY(-1px)";
             }
           }}
@@ -311,8 +435,28 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
             }
           }}
         >
-          Записаться
+          Записаться (демо)
         </button>
+
+        {serviceId && (
+          <button
+            type="button"
+            onClick={() => setShowSubscribe(!showSubscribe)}
+            aria-label="Подписаться на цену"
+            style={{
+              padding: "10px 12px",
+              background: subscribed ? "rgba(36,180,126,0.06)" : "transparent",
+              border: "var(--border-w) solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              color: subscribed ? "var(--accent-green)" : "var(--text-muted)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <Bell size={14} />
+          </button>
+        )}
 
         {clinic.website_url && (
           <a
@@ -336,7 +480,7 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
               (e.currentTarget as HTMLAnchorElement).style.borderColor = "var(--accent)";
               (e.currentTarget as HTMLAnchorElement).style.color = "var(--accent)";
               (e.currentTarget as HTMLAnchorElement).style.transform = "translate(1px, -1px)";
-              (e.currentTarget as HTMLAnchorElement).style.background = "rgba(99, 91, 255, 0.04)";
+              (e.currentTarget as HTMLAnchorElement).style.background = "rgba(13, 148, 136, 0.04)";
             }}
             onMouseLeave={(e) => {
               (e.currentTarget as HTMLAnchorElement).style.borderColor = "var(--border)";
@@ -349,6 +493,6 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook }:
           </a>
         )}
       </div>
-    </article>
+    </motion.article>
   );
 }

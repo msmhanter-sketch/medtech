@@ -14,9 +14,9 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import Optional
+import statistics
 
 from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import PriceItem
@@ -36,6 +36,8 @@ class RawPriceRow:
     name: str
     price_str: str                       # Сырая строка цены (может быть "2 500", "от 1800")
     price_date: Optional[date] = None    # None → используем сегодня
+    duration_days: Optional[int] = None  # Срок выполнения в днях (для анализов)
+    currency: str = "KZT"                # Валюта
 
 
 def parse_price(price_str: str) -> Optional[Decimal]:
@@ -95,7 +97,7 @@ def parse_price(price_str: str) -> Optional[Decimal]:
 
     try:
         value = Decimal(number_str)
-        if value <= 0:
+        if value <= 0 or value > 5_000_000:
             return None
         return value
     except InvalidOperation:
@@ -112,11 +114,15 @@ class IngestionResult:
     updated: int = 0
     skipped_no_match: int = 0
     skipped_parse_error: int = 0
+    anomalies_detected: int = 0
     errors: list[str] = None
+    anomalous_service_ids: list[int] = None
 
     def __post_init__(self):
         if self.errors is None:
             self.errors = []
+        if self.anomalous_service_ids is None:
+            self.anomalous_service_ids = []
 
     def to_dict(self) -> dict:
         return {
@@ -126,8 +132,30 @@ class IngestionResult:
             "updated": self.updated,
             "skipped_no_match": self.skipped_no_match,
             "skipped_parse_error": self.skipped_parse_error,
+            "anomalies_detected": self.anomalies_detected,
             "errors": self.errors,
+            "anomalous_service_ids": self.anomalous_service_ids,
         }
+
+async def fetch_median_prices(db: AsyncSession, service_ids: list[int]) -> dict[int, Decimal]:
+    """Fetch all prices for the given services and calculate their medians in memory."""
+    if not service_ids:
+        return {}
+    
+    stmt = select(PriceItem.service_id, PriceItem.price_kzt).where(PriceItem.service_id.in_(service_ids))
+    result = await db.execute(stmt)
+    
+    prices_by_service: dict[int, list[Decimal]] = {}
+    for row in result.all():
+        service_id, price = row[0], row[1]
+        prices_by_service.setdefault(service_id, []).append(price)
+        
+    medians: dict[int, Decimal] = {}
+    for service_id, prices in prices_by_service.items():
+        if prices:
+            medians[service_id] = Decimal(statistics.median(prices))
+            
+    return medians
 
 
 async def ingest_price_list(
@@ -165,6 +193,10 @@ async def ingest_price_list(
             f"Длина raw_rows ({len(raw_rows)}) != match_results ({len(match_results)})"
         )
 
+    # Получаем медианные цены для всех матчей
+    service_ids = [m.matched_service_id for m in match_results if m.matched_service_id is not None]
+    medians = await fetch_median_prices(db, list(set(service_ids)))
+
     for raw_row, match in zip(raw_rows, match_results):
         # ── Проверяем статус матча ────────────────────────────────────────
         should_write = (
@@ -190,6 +222,22 @@ async def ingest_price_list(
             continue
 
         is_verified = match.status == "auto_accepted" and match.score >= 90
+        
+        # ── Проверка на аномалию ──────────────────────────────────────────
+        is_anomaly = False
+        median_price = medians.get(match.matched_service_id)
+        if median_price and price:
+            # Если цена отличается от медианы более чем в 3 раза, это аномалия
+            if price > median_price * 3 or price < median_price / 3:
+                is_anomaly = True
+                is_verified = False
+                report.anomalies_detected += 1
+                if match.matched_service_id not in report.anomalous_service_ids:
+                    report.anomalous_service_ids.append(match.matched_service_id)
+                log.warning(
+                    f"Аномалия цены: {raw_row.name!r} стоит {price} тг "
+                    f"(медиана по рынку: {median_price} тг). Требует ручной проверки."
+                )
 
         # ── Database-Agnostic UPSERT ──────────────────────────────────────
         try:
@@ -209,6 +257,8 @@ async def ingest_price_list(
                 existing_price.source_name = raw_row.name
                 existing_price.match_score = match.score
                 existing_price.is_verified = is_verified
+                existing_price.duration_days = raw_row.duration_days
+                existing_price.currency = raw_row.currency
                 report.updated += 1
             else:
                 # Вставляем новую запись
@@ -220,6 +270,8 @@ async def ingest_price_list(
                     source_name=raw_row.name,
                     match_score=match.score,
                     is_verified=is_verified,
+                    duration_days=raw_row.duration_days,
+                    currency=raw_row.currency,
                 )
                 db.add(new_price)
                 report.inserted += 1

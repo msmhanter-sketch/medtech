@@ -98,6 +98,13 @@ class TestNormalizeText:
         assert "<" not in result
         assert ">" not in result
 
+    def test_kazakh_letters_preserved(self):
+        # Буквы әіңғүұқөһ не должны удаляться регулярным выражением нормализатора
+        result = normalize_text("Қан талдауы (ОАК) әдісі")
+        assert "қан" in result
+        assert "талдауы" in result
+        assert "әдісі" in result
+
 
 class TestBuildSearchCorpus:
 
@@ -246,3 +253,17 @@ class TestServiceMatcher:
         """CBC (английская аббревиатура) → ОАК."""
         result = matcher.match_single("CBC blood test")
         assert result.matched_service_id == 1
+
+
+class TestScrapeValidation:
+    def test_rejects_garbage(self):
+        from scrapers.validate import is_valid_service_name, is_valid_price
+
+        assert not is_valid_service_name(".")
+        assert not is_valid_service_name("1 консультация")
+        assert not is_valid_service_name("•\tПри проведении аллергологического")
+        assert is_valid_service_name("Общий анализ крови (ОАК)")
+        assert is_valid_service_name("СОЭ")
+        assert is_valid_price(1500)
+        assert not is_valid_price(50)
+        assert not is_valid_price(9_000_000)

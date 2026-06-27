@@ -3,6 +3,7 @@ app/core/database.py — Async database engine и session factory.
 Используем SQLAlchemy 2.x с asyncpg драйвером.
 """
 import os
+from pathlib import Path
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import (
@@ -11,10 +12,10 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite+aiosqlite:///./medtech.db",
-)
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_DEFAULT_SQLITE_URL = f"sqlite+aiosqlite:///{(_BACKEND_DIR / 'medtech.db').as_posix()}"
+
+DATABASE_URL = os.getenv("DATABASE_URL", _DEFAULT_SQLITE_URL)
 
 is_sqlite = DATABASE_URL.startswith("sqlite")
 
@@ -53,6 +54,13 @@ if is_sqlite:
             return idx + 1 if idx != -1 else 0
 
         dbapi_connection.create_function("strpos", 2, strpos)
+        
+        # Оптимизация SQLite для конкурентной работы (Write-Ahead Logging)
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA cache_size=-64000;") # 64MB кэша
+        cursor.close()
 
 
 

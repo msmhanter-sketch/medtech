@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.core.database import get_db
 from app.core.redis_client import get_redis, is_redis_available
 from app.models.models import Service, ServiceCategory
-from app.schemas.clinic import ServiceCategoryRead, ServiceRead, ServiceSearchResult
+from app.schemas.clinic import ServiceCatalogItem, ServiceCategoryRead, ServiceRead, ServiceSearchResult
 
 log = logging.getLogger(__name__)
 
@@ -26,6 +26,16 @@ router = APIRouter(prefix="/api", tags=["services"])
 
 # TTL кэша для категорий — обновляются редко, кэшируем на 1 час
 CATEGORIES_CACHE_KEY = "categories:all"
+
+
+def _parse_aliases(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    try:
+        aliases = json.loads(raw)
+    except json.JSONDecodeError:
+        aliases = [part.strip() for part in raw.split(",")]
+    return [str(alias).strip() for alias in aliases if str(alias).strip()]
 CATEGORIES_CACHE_TTL = 3600  # секунды
 
 
@@ -98,7 +108,7 @@ async def search_services(
         default="",
         max_length=150,
         description="Поисковый запрос (минимум 2 символа для поиска)",
-        example="МРТ",
+        examples=["МРТ"],
     ),
     limit: int = Query(default=10, ge=1, le=50, description="Максимум результатов"),
     category_id: Optional[int] = Query(None, description="Фильтр по категории"),

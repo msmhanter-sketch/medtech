@@ -12,9 +12,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 from app.api.clinics import router as clinics_router
+from app.api.history import router as history_router
+from app.api.collected_data import router as collected_data_router
 from app.api.normalize import router as normalize_router
+from app.api.scrape import router as scrape_router
 from app.api.services import router as services_router
-from app.core.database import AsyncSessionLocal
+from app.api.stats import router as stats_router
+from app.api.insights import router as insights_router
+from app.api.dgis import router as dgis_router
+from app.api.subscriptions import router as subscriptions_router
+from app.core.database import AsyncSessionLocal, engine
+from app.models.base import Base
 from app.core.redis_client import close_redis, get_redis, set_redis_unavailable, is_redis_available
 from app.normalizer import init_matcher
 
@@ -31,7 +39,20 @@ async def lifespan(app: FastAPI):
     """Управление жизненным циклом: startup / shutdown."""
     log.info("🚀 MedPrice KZ API запускается...")
 
-    # 1. Проверяем Redis
+    # 1. Создаём недостающие таблицы (MVP, без Alembic)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+    except Exception as exc:
+        log.warning(f"⚠️  create_all: {exc}")
+
+    from app.services.db_migrate import ensure_clinic_columns
+    try:
+        await ensure_clinic_columns()
+    except Exception as exc:
+        log.warning(f"⚠️  clinic columns migrate: {exc}")
+
+    # 2. Проверяем Redis
     try:
         redis = await get_redis()
         await redis.ping()
@@ -99,9 +120,16 @@ async def log_requests(request: Request, call_next) -> Response:
 
 # ─── Роутеры ──────────────────────────────────────────────────────────────────
 
+app.include_router(scrape_router)
+app.include_router(collected_data_router)
 app.include_router(services_router)
 app.include_router(clinics_router)
+app.include_router(history_router)
 app.include_router(normalize_router)
+app.include_router(stats_router)
+app.include_router(insights_router)
+app.include_router(subscriptions_router)
+app.include_router(dgis_router)
 
 
 # ─── Служебные эндпоинты ──────────────────────────────────────────────────────

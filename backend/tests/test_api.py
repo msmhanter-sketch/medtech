@@ -4,8 +4,10 @@ tests/test_api.py — Интеграционные тесты для FastAPI э�
 Запуск: pytest tests/ -v
 Требует рабочего PostgreSQL + Redis (или используй моки).
 """
+import time
 import pytest
 import pytest_asyncio
+from uuid import UUID
 from httpx import AsyncClient, ASGITransport
 
 from app.main import app
@@ -77,6 +79,35 @@ class TestServicesSearch:
         assert response.status_code == 200
         assert response.json() == []
 
+    async def test_search_latency_under_3_seconds(self, client: AsyncClient):
+        """NFR ТЗ §4: поисковая выдача — не более 3 секунд."""
+        start = time.perf_counter()
+        response = await client.get("/api/services/search?q=МРТ&limit=10")
+        elapsed = time.perf_counter() - start
+        assert response.status_code == 200
+        assert elapsed < 3.0, f"Search took {elapsed:.2f}s (limit 3s per TZ)"
+
+
+class TestHistory:
+    async def test_price_changes_archive(self, client: AsyncClient):
+        response = await client.get("/api/history/changes?limit=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert "total" in data
+        assert "items" in data
+
+
+class TestNormalizeAdmin:
+    async def test_disputed_prices_list(self, client: AsyncClient):
+        response = await client.get("/api/normalize/disputed?limit=5")
+        assert response.status_code == 200
+        assert "items" in response.json()
+
+    async def test_review_queue_list(self, client: AsyncClient):
+        response = await client.get("/api/normalize/review?limit=5")
+        assert response.status_code == 200
+        assert "items" in response.json()
+
 
 class TestClinicsCompare:
     async def test_compare_requires_service_id(self, client: AsyncClient):
@@ -106,7 +137,7 @@ class TestClinicsCompare:
         )
         assert response.status_code == 200
         clinics = response.json()["clinics"]
-        prices = [c["price_kzt"] for c in clinics]
+        prices = [float(c["price_kzt"]) for c in clinics]
         assert prices == sorted(prices)
 
     async def test_compare_cheapest_flag(self, client: AsyncClient):
@@ -120,3 +151,38 @@ class TestClinicsCompare:
             assert len(cheapest) >= 1
             # Самая дешёвая — первая в price_asc
             assert clinics[0]["is_cheapest"] is True
+
+
+class TestCollectedDataContract:
+    async def test_collected_data_matches_tz_2_2_shape(self, client: AsyncClient):
+        response = await client.get("/api/data/collected?limit=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert 1 <= len(data) <= 5
+
+        expected_fields = {
+            "clinic_id",
+            "clinic_name",
+            "city",
+            "address",
+            "phone",
+            "working_hours",
+            "source_url",
+            "service_id",
+            "service_name_raw",
+            "service_name_norm",
+            "category",
+            "price_kzt",
+            "currency",
+            "duration_days",
+            "parsed_at",
+            "is_active",
+        }
+        row = data[0]
+        assert set(row) == expected_fields
+        UUID(row["clinic_id"])
+        UUID(row["service_id"])
+        assert row["category"] in {"лаборатория", "приём врача", "диагностика", "процедура"}
+        assert row["currency"] in {"KZT", "USD"}
+        assert float(row["price_kzt"]) > 0
+        assert isinstance(row["is_active"], bool)

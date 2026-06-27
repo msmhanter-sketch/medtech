@@ -10,6 +10,7 @@ from typing import Optional
 
 from sqlalchemy import (
     Date,
+    DateTime,
     ForeignKey,
     Index,
     Numeric,
@@ -60,14 +61,26 @@ class Clinic(Base):
     phone: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True, comment="Контактный телефон"
     )
+    working_hours: Mapped[Optional[str]] = mapped_column(
+        String(200), nullable=True, comment="Режим работы"
+    )
     website_url: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True, comment="URL официального сайта"
     )
     logo_url: Mapped[Optional[str]] = mapped_column(
         String(500), nullable=True, comment="URL логотипа"
     )
+    source_id: Mapped[Optional[str]] = mapped_column(
+        String(64), nullable=True, index=True, comment="ID источника (doq, invitro_kz…)"
+    )
+    external_id: Mapped[Optional[str]] = mapped_column(
+        String(128), nullable=True, index=True, comment="Внешний ID филиала в источнике"
+    )
     is_active: Mapped[bool] = mapped_column(
         default=True, nullable=False, comment="Флаг активности (не удалённые)"
+    )
+    has_online_booking: Mapped[bool] = mapped_column(
+        default=False, nullable=False, comment="Наличие онлайн-записи"
     )
 
     # Relationships
@@ -225,6 +238,12 @@ class PriceItem(Base):
         default=False, nullable=False,
         comment="True если цена верифицирована вручную"
     )
+    duration_days: Mapped[Optional[int]] = mapped_column(
+        nullable=True, comment="Срок выполнения в днях (для анализов)"
+    )
+    currency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="KZT", comment="Валюта"
+    )
 
     # Relationships
     clinic: Mapped["Clinic"] = relationship(back_populates="price_items")
@@ -245,3 +264,102 @@ class PriceItem(Base):
             f"<PriceItem clinic_id={self.clinic_id} "
             f"service_id={self.service_id} price={self.price_kzt}>"
         )
+
+
+# ─── ParsedPriceRow (raw-слой) ─────────────────────────────────────────────────
+
+class ParsedPriceRow(Base):
+    """
+    Сырые строки прайса до/после нормализации.
+    Хранятся для аудита и очереди ручной разметки (unmatched queue).
+    """
+    __tablename__ = "parsed_price_rows"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    clinic_id: Mapped[int] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_file: Mapped[str] = mapped_column(
+        String(500), nullable=False, comment="Имя исходного файла прайса"
+    )
+    raw_name: Mapped[str] = mapped_column(
+        String(500), nullable=False, comment="Название услуги как в прайсе"
+    )
+    raw_price: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, comment="Сырая строка цены"
+    )
+    parsed_price_kzt: Mapped[Optional[Decimal]] = mapped_column(
+        Numeric(12, 2), nullable=True, comment="Распознанная цена в KZT"
+    )
+    duration_days: Mapped[Optional[int]] = mapped_column(
+        nullable=True, comment="Срок выполнения в днях (для анализов)"
+    )
+    currency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="KZT", comment="Валюта"
+    )
+    match_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="not_found",
+        comment="auto_accepted | needs_review | not_found | skipped",
+    )
+    matched_service_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("services.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    match_score: Mapped[Optional[int]] = mapped_column(nullable=True)
+    price_item_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("price_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    parsed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    clinic: Mapped["Clinic"] = relationship()
+    matched_service: Mapped[Optional["Service"]] = relationship()
+    price_item: Mapped[Optional["PriceItem"]] = relationship()
+
+    __table_args__ = (
+        Index("ix_parsed_rows_status", "match_status"),
+        Index("ix_parsed_rows_clinic_file", "clinic_id", "source_file"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ParsedPriceRow id={self.id} status={self.match_status!r}>"
+
+
+# ─── PriceSubscription ─────────────────────────────────────────────────────────
+
+class PriceSubscription(Base):
+    """Подписка пользователя на изменение цены по услуге в конкретной клинике."""
+    __tablename__ = "price_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    service_id: Mapped[int] = mapped_column(
+        ForeignKey("services.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    clinic_id: Mapped[int] = mapped_column(
+        ForeignKey("clinics.id", ondelete="CASCADE"), nullable=False, index=True,
+    )
+    city: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("email", "service_id", "clinic_id", name="uq_subscription"),
+    )
+
+
+class NewsletterSubscriber(Base):
+    """Подписка на дайджест цен (footer)."""
+    __tablename__ = "newsletter_subscribers"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)

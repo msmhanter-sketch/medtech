@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { ClinicInCompare, formatPrice } from "@/lib/api";
+import { useTheme } from "next-themes";
 
 interface ClinicMapProps {
   clinics: ClinicInCompare[];
@@ -19,26 +20,35 @@ export default function ClinicMap({
   onBookClinic,
   city,
 }: ClinicMapProps) {
+  const { resolvedTheme } = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Record<number, L.Marker>>({});
+  const layerRef = useRef<L.TileLayer | null>(null);
 
   // 1. Инициализация карты
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
     // Начальный центр в зависимости от города
-    const defaultCenter: L.LatLngExpression = city.toLowerCase().includes("алм")
-      ? [43.238949, 76.889709] // Алматы
-      : [51.169392, 71.449074]; // Астана
+    const cityLower = city.toLowerCase();
+    const defaultCenter: L.LatLngExpression = cityLower.includes("алм")
+      ? [43.238949, 76.889709]
+      : cityLower.includes("шым")
+        ? [42.341700, 69.590100]
+        : [51.169392, 71.449074];
 
     const map = L.map(containerRef.current, {
       zoomControl: true,
       attributionControl: true,
     }).setView(defaultCenter, 13);
 
+    const tileUrl = resolvedTheme === "dark"
+      ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+
     // Добавляем красивую гладкую подложку OpenStreetMap
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+    layerRef.current = L.tileLayer(tileUrl, {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
       maxZoom: 20,
     }).addTo(map);
@@ -81,7 +91,17 @@ export default function ClinicMap({
         mapRef.current = null;
       }
     };
-  }, [city, clinics, onBookClinic]);
+  }, [city, clinics, onBookClinic, resolvedTheme]);
+
+  // Обновление слоя при изменении темы
+  useEffect(() => {
+    if (layerRef.current) {
+      const tileUrl = resolvedTheme === "dark"
+        ? "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+        : "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
+      layerRef.current.setUrl(tileUrl);
+    }
+  }, [resolvedTheme]);
 
   // 2. Обновление маркеров при изменении списка клиник
   useEffect(() => {
@@ -97,10 +117,12 @@ export default function ClinicMap({
     );
 
     if (validClinics.length === 0) {
-      // Если клиник нет, центрируем на дефолтном значении
-      const defaultCenter: L.LatLngExpression = city.toLowerCase().includes("алм")
+      const cityLower = city.toLowerCase();
+      const defaultCenter: L.LatLngExpression = cityLower.includes("алм")
         ? [43.238949, 76.889709]
-        : [51.169392, 71.449074];
+        : cityLower.includes("шым")
+          ? [42.341700, 69.590100]
+          : [51.169392, 71.449074];
       map.setView(defaultCenter, 12);
       return;
     }
@@ -134,7 +156,7 @@ export default function ClinicMap({
           <div style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #e6ebf1; padding-top: 8px; margin-top: 8px;">
             <div>
               <span style="font-size: 9px; color: #727f96; text-transform: uppercase; display: block;">Стоимость</span>
-              <strong style="font-size: 14px; color: #635bff;">${formatPrice(clinic.price_kzt)}</strong>
+              <strong style="font-size: 14px; color: #0d9488;">${formatPrice(clinic.price_kzt)}</strong>
             </div>
             <button class="popup-book-btn btn-solid" data-clinic-id="${clinic.id}" style="padding: 5px 12px; font-size: 11px; font-weight: 500; height: auto; border-radius: 4px; line-height: 1;">
               Записаться
@@ -208,7 +230,7 @@ export default function ClinicMap({
           width: 14px;
           height: 14px;
           border-radius: 50%;
-          background: #635bff;
+          background: #0d9488;
           border: 2px solid #ffffff;
           box-shadow: 0 3px 6px rgba(10, 37, 64, 0.25);
           transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
@@ -221,7 +243,7 @@ export default function ClinicMap({
           width: 26px;
           height: 26px;
           border-radius: 50%;
-          border: 2px solid #635bff;
+          border: 2px solid #0d9488;
           opacity: 0;
           top: -6px;
           animation: markerPulse 2s infinite ease-out;
@@ -294,10 +316,10 @@ export default function ClinicMap({
         }
         
         .map-popup-card .popup-book-btn {
-          box-shadow: 0 2px 4px rgba(99, 91, 255, 0.15) !important;
+          box-shadow: 0 2px 4px rgba(13, 148, 136, 0.15) !important;
         }
         .map-popup-card .popup-book-btn:hover {
-          background: #544cf0 !important;
+          background: #0f766e !important;
           transform: translateY(-0.5px) !important;
         }
       `}</style>

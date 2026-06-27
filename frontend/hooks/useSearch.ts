@@ -19,7 +19,7 @@ interface UseSearchReturn {
  * Хук для живого поиска услуг с debounce.
  * Запрос на бэкенд идёт через 300ms после последнего ввода.
  */
-export function useSearch(debounceMs = 300): UseSearchReturn {
+export function useSearch(debounceMs = 300, categoryId?: number): UseSearchReturn {
   const [query, setQueryRaw] = useState("");
   const [results, setResults] = useState<ServiceSearchResult[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -48,7 +48,7 @@ export function useSearch(debounceMs = 300): UseSearchReturn {
     timerRef.current = setTimeout(async () => {
       abortRef.current = new AbortController();
       try {
-        const data = await api.searchServices(q.trim(), 8);
+        const data = await api.searchServices(q.trim(), 8, categoryId);
         setResults(data);
         setIsOpen(data.length > 0);
       } catch {
@@ -58,7 +58,7 @@ export function useSearch(debounceMs = 300): UseSearchReturn {
         setIsLoading(false);
       }
     }, debounceMs);
-  }, [debounceMs]);
+  }, [debounceMs, categoryId]);
 
   const selectService = useCallback((svc: ServiceSearchResult) => {
     setSelectedService(svc);

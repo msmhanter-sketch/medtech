@@ -28,8 +28,8 @@ from app.normalizer.text_utils import build_search_corpus, normalize_text
 log = logging.getLogger(__name__)
 
 # ─── Пороги уверенности (настраиваются под специфику клиники) ─────────────────
-AUTO_ACCEPT_THRESHOLD = 82  # score ≥ 82 → принимаем автоматически
-REVIEW_THRESHOLD = 60       # score 60–81 → очередь ревью
+AUTO_ACCEPT_THRESHOLD = 88  # score ≥ 88 → принимаем автоматически (строже для точности)
+REVIEW_THRESHOLD = 72       # score 72–87 → очередь ревью
 # score < 60 → не найдено
 
 
@@ -195,6 +195,16 @@ class ServiceMatcher:
 
         if not self._flat_corpus:
             log.warning("match_single: корпус пуст, нет услуг в индексе")
+            return result
+
+        # Точное совпадение с эталоном/алиасом — 100% уверенность
+        if normalized in self._corpus_to_entry:
+            entry = self._corpus_to_entry[normalized]
+            result.matched_service_id = entry.service_id
+            result.matched_name = entry.canonical_name
+            result.matched_variant = normalized
+            result.score = 100
+            result.status = "auto_accepted"
             return result
 
         # ── Fuzzy-поиск через rapidfuzz ───────────────────────────────────

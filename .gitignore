@@ -9,7 +9,11 @@ __pycache__/
 *.pyc
 
 # Local databases
-backend/medtech.db
+*.db
+*.db-shm
+*.db-wal
+backend/logs/
+
 
 # Node dependencies and build
 frontend/node_modules/

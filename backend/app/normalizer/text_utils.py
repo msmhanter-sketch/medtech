@@ -86,7 +86,7 @@ def normalize_text(raw: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text)
 
     # 4. Заменяем спецсимволы (кроме букв, цифр, дефиса) на пробел
-    text = re.sub(r"[^а-яёa-z0-9\s\-]", " ", text)
+    text = re.sub(r"[^а-яёәіңғүұқөһa-z0-9\s\-]", " ", text)
 
     # 5. Расшифровка аббревиатур — ищем изолированные токены
     tokens = text.split()

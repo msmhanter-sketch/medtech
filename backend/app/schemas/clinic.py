@@ -19,6 +19,7 @@ class ClinicBase(BaseModel):
     longitude: Optional[float] = Field(None, ge=-180, le=180)
     rating: Optional[Decimal] = Field(None, ge=0, le=5)
     phone: Optional[str] = Field(None, max_length=50)
+    working_hours: Optional[str] = Field(None, max_length=200, description="Режим работы")
     website_url: Optional[str] = Field(None, max_length=500)
     logo_url: Optional[str] = Field(None, max_length=500)
 
@@ -45,6 +46,7 @@ class ClinicInCompare(BaseModel):
     longitude: Optional[float] = None
     rating: Optional[Decimal] = None
     phone: Optional[str] = None
+    working_hours: Optional[str] = None
     website_url: Optional[str] = None
     logo_url: Optional[str] = None
 
@@ -53,6 +55,18 @@ class ClinicInCompare(BaseModel):
     price_date: date = Field(..., description="Дата актуальности прайса")
     is_verified: bool = Field(..., description="Верифицирована ли цена вручную")
     is_cheapest: bool = Field(False, description="Флаг: самая низкая цена среди результатов")
+    duration_days: Optional[int] = Field(None, description="Срок выполнения в днях (для анализов)")
+    currency: str = Field("KZT", description="Валюта")
+    source_name: Optional[str] = Field(None, description="Название услуги как на сайте клиники")
+    source_url: Optional[str] = Field(None, description="URL источника прайса")
+    match_score: Optional[int] = Field(None, description="Точность нормализации 0–100")
+    source_parser: Optional[str] = Field(None, description="ID парсера (invitro, helix, …)")
+    source_parser_label: Optional[str] = Field(None, description="Человекочитаемое имя источника")
+    official_source_url: Optional[str] = Field(None, description="Официальный URL прайса")
+    
+    # Поле расстояния (вычисляется динамически)
+    distance_km: Optional[float] = Field(None, description="Расстояние от пользователя в км")
+
 
 
 # ─── Service & Category Schemas ────────────────────────────────────────────────
@@ -91,12 +105,41 @@ class ServiceSearchResult(BaseModel):
 
 # ─── Response Wrappers ─────────────────────────────────────────────────────────
 
+class ServiceCatalogItem(BaseModel):
+    """Canonical service catalog item used by the normalizer."""
+
+    id: int
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    category_id: int
+    category_name: str
+    category_slug: str
+
+
 class PaginatedResponse(BaseModel):
     """Универсальная обёртка для пагинированных ответов."""
     total: int
     page: int
     page_size: int
     items: list
+
+
+class ClinicPriceItem(BaseModel):
+    """Цена услуги в клинике для карточки клиники."""
+    service_id: int
+    service_name: str
+    category_name: str
+    price_kzt: Decimal
+    price_date: date
+    source_name: Optional[str] = None
+    source_url: Optional[str] = None
+    is_verified: bool = False
+    match_score: Optional[int] = None
+    source_parser: Optional[str] = None
+    source_parser_label: Optional[str] = None
+    official_source_url: Optional[str] = None
+    duration_days: Optional[int] = Field(None, description="Срок выполнения в днях")
+    currency: str = Field("KZT", description="Валюта")
 
 
 class CompareResponse(BaseModel):

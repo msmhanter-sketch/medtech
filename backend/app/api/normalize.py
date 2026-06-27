@@ -13,16 +13,17 @@ import os
 import re
 import csv
 import zipfile
+import tempfile
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status, UploadFile, File
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from rapidfuzz import fuzz
 
 from app.core.database import get_db
-from app.models.models import Clinic
+from app.models.models import Clinic, ParsedPriceRow, PriceItem, Service
 from app.normalizer import get_matcher, init_matcher
 from app.normalizer.ingestion import RawPriceRow, ingest_price_list
 from app.normalizer.matcher import ServiceMatcher, MatchResult
@@ -45,7 +46,7 @@ async def detect_clinic_from_filename(filename: str, db: AsyncSession) -> Option
     # Очищаем имя файла от расширения и путей, переводим в нижний регистр
     base_name = os.path.splitext(os.path.basename(filename))[0].lower()
     # Убираем спецсимволы и шумовые слова
-    clean_filename = re.sub(r"[^а-яёa-z0-9]", " ", base_name)
+    clean_filename = re.sub(r"[^а-яёәіңғүұқөһa-z0-9]", " ", base_name)
     clean_filename = " ".join([w for w in clean_filename.split() if w not in ["prices", "price", "прайс", "услуги", "list"]])
     
     if not clean_filename:
@@ -55,7 +56,7 @@ async def detect_clinic_from_filename(filename: str, db: AsyncSession) -> Option
     best_score = 0
     
     for clinic in clinics:
-        clinic_name_normalized = re.sub(r"[^а-яёa-z0-9]", " ", clinic.name.lower())
+        clinic_name_normalized = re.sub(r"[^а-яёәіңғүұқөһa-z0-9]", " ", clinic.name.lower())
         clinic_name_clean = " ".join([w for w in clinic_name_normalized.split() if w not in ["лаборатория", "клиника", "больница", "lc", "kazakhstan", "пк"]])
         
         # Проверяем точное вхождение
@@ -78,81 +79,82 @@ async def detect_clinic_from_filename(filename: str, db: AsyncSession) -> Option
 
 
 def parse_price_file(content_bytes: bytes, filename: str) -> list[dict]:
-    """Парсит CSV или JSON файл прайс-листа."""
+    """Парсит CSV, JSON, PDF, DOCX или Excel прайс-лист."""
     import json
-    rows = []
-    text = content_bytes.decode("utf-8", errors="ignore")
-    
-    if filename.endswith(".json"):
-        try:
-            data = json.loads(text)
-            items = []
-            if isinstance(data, list):
-                items = data
-            elif isinstance(data, dict):
-                for v in data.values():
-                    if isinstance(v, list):
-                        items = v
-                        break
-            
-            for item in items:
-                if isinstance(item, dict):
-                    name_val = ""
-                    for k in ["name", "title", "услуга", "название", "наименование", "service"]:
-                        if k in item:
-                            name_val = str(item[k]).strip()
+    ext = os.path.splitext(filename)[1].lower()
+
+    if ext in (".csv", ".json"):
+        rows = []
+        text = content_bytes.decode("utf-8", errors="ignore")
+        
+        if filename.endswith(".json"):
+            try:
+                data = json.loads(text)
+                items = []
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    for v in data.values():
+                        if isinstance(v, list):
+                            items = v
                             break
-                    price_val = ""
-                    for k in ["price", "cost", "цена", "стоимость", "rate"]:
-                        if k in item:
-                            price_val = str(item[k]).strip()
-                            break
-                    if name_val:
-                        rows.append({"name": name_val, "price": price_val})
-        except Exception as e:
-            log.warning(f"Error parsing JSON {filename}: {e}")
-            
-    elif filename.endswith(".csv"):
-        try:
-            first_line = text.split("\n")[0] if text else ""
-            separator = ";" if ";" in first_line else ("," if "," in first_line else "\t")
-            
-            f = io.StringIO(text)
-            reader = csv.reader(f, delimiter=separator)
-            all_lines = list(reader)
-            if not all_lines:
-                return []
                 
-            headers = [h.lower().strip() for h in all_lines[0]]
-            name_idx = -1
-            price_idx = -1
-            
-            for idx, h in enumerate(headers):
-                if any(x in h for x in ["name", "title", "услуга", "название", "наименование"]):
-                    name_idx = idx
-                    break
-            for idx, h in enumerate(headers):
-                if any(x in h for x in ["price", "cost", "цена", "стоимость"]):
-                    price_idx = idx
-                    break
-            
-            start_row = 1
-            if name_idx == -1 or price_idx == -1:
-                name_idx = 0
-                price_idx = 1 if len(headers) > 1 else 0
-                start_row = 0
-                
-            for row in all_lines[start_row:]:
-                if not row or len(row) <= name_idx:
+                for item in items:
+                    if isinstance(item, dict):
+                        name_val = ""
+                        price_val = ""
+                        for k, v in item.items():
+                            kl = str(k).lower()
+                            if kl in ("name", "service", "услуга", "наименование", "title"):
+                                name_val = str(v)
+                            elif kl in ("price", "cost", "цена", "стоимость", "amount"):
+                                price_val = str(v)
+                        if name_val:
+                            rows.append({"name": name_val, "price": price_val})
+            except json.JSONDecodeError:
+                pass
+            return rows
+
+        # CSV
+        reader = csv.DictReader(io.StringIO(text))
+        for row in reader:
+            name_val = ""
+            price_val = ""
+            for k, v in row.items():
+                if not k:
                     continue
-                name_val = row[name_idx].strip()
-                price_val = row[price_idx].strip() if len(row) > price_idx else ""
-                if name_val:
-                    rows.append({"name": name_val, "price": price_val})
-        except Exception as e:
-            log.warning(f"Error parsing CSV {filename}: {e}")
-            
-    return rows
+                kl = k.lower()
+                if kl in ("name", "service", "услуга", "наименование", "title"):
+                    name_val = str(v or "")
+                elif kl in ("price", "cost", "цена", "стоимость", "amount"):
+                    price_val = str(v or "")
+            if name_val:
+                rows.append({"name": name_val, "price": price_val})
+        return rows
+
+    if ext in (".pdf", ".doc", ".docx", ".xls", ".xlsx"):
+        from parsers import get_parser
+
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                tmp.write(content_bytes)
+                tmp_path = tmp.name
+            parser_fn = get_parser(tmp_path)
+            parsed = parser_fn(tmp_path)
+            return [
+                {"name": str(item.get("name", "")), "price": str(item.get("price", ""))}
+                for item in parsed
+                if item.get("name")
+            ]
+        except Exception as exc:
+            log.warning("parse_price_file %s: %s", filename, exc)
+            return []
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+
+    return []
 
 
 # ─── Pydantic-схемы для архивов ──────────────────────────────────────────────
@@ -180,6 +182,11 @@ class ArchiveImportPayload(BaseModel):
 
 # ─── Pydantic-схемы запросов/ответов ─────────────────────────────────────────
 
+class ManualMatchRequest(BaseModel):
+    parsed_row_id: int
+    service_id: int
+
+
 class PriceRowInput(BaseModel):
     """Одна строка входного прайс-листа."""
     name: str = Field(
@@ -187,12 +194,12 @@ class PriceRowInput(BaseModel):
         min_length=1,
         max_length=500,
         description="Название услуги как написано в прайсе клиники",
-        example="ОАК (срочно)",
+        json_schema_extra={"examples": ["ОАК (срочно)"]},
     )
     price: Optional[str] = Field(
         None,
         description="Цена в виде строки: '2 500', '1800 тг', 'от 1500'",
-        example="2 500",
+        json_schema_extra={"examples": ["2 500"]},
     )
     price_date: Optional[date] = Field(
         None,
@@ -207,7 +214,7 @@ class PreviewRequest(BaseModel):
         min_length=1,
         max_length=500,
         description="Список названий услуг для сопоставления",
-        example=["ОАК", "МРТ головы без контраста", "Чистка зубов Air flow"],
+        json_schema_extra={"examples": [["ОАК", "МРТ головы без контраста", "Чистка зубов Air flow"]]},
     )
 
 
@@ -227,6 +234,298 @@ class IngestRequest(BaseModel):
             "(needs_review), помечая is_verified=False."
         ),
     )
+
+
+# ─── GET /api/normalize/unmatched ─────────────────────────────────────────────
+
+@router.get(
+    "/unmatched",
+    summary="Очередь несопоставленных услуг",
+    description="Строки из raw-слоя со статусом not_found для ручной разметки.",
+)
+async def list_unmatched(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    from app.models.models import ParsedPriceRow, Clinic
+
+    stmt = (
+        select(ParsedPriceRow, Clinic.name, Clinic.city)
+        .join(Clinic, ParsedPriceRow.clinic_id == Clinic.id)
+        .where(ParsedPriceRow.match_status == "not_found")
+        .order_by(ParsedPriceRow.parsed_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    total_unmatched = await db.scalar(
+        select(func.count())
+        .select_from(ParsedPriceRow)
+        .where(ParsedPriceRow.match_status == "not_found")
+    )
+    return {
+        "total": total_unmatched or 0,
+        "offset": offset,
+        "items": [
+            {
+                "id": pr.id,
+                "raw_name": pr.raw_name,
+                "raw_price": pr.raw_price,
+                "source_file": pr.source_file,
+                "clinic_name": clinic_name,
+                "city": clinic_city,
+                "parsed_at": pr.parsed_at.isoformat(),
+                "best_score": pr.match_score,
+            }
+            for pr, clinic_name, clinic_city in rows
+        ],
+    }
+
+
+@router.get(
+    "/review",
+    summary="Очередь услуг на проверку (needs_review)",
+    description="Строки с частичным совпадением (score 72–87) для ручной верификации.",
+)
+async def list_needs_review(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    from app.models.models import ParsedPriceRow, Clinic, Service
+
+    stmt = (
+        select(ParsedPriceRow, Clinic.name, Clinic.city, Service.name)
+        .join(Clinic, ParsedPriceRow.clinic_id == Clinic.id)
+        .outerjoin(Service, ParsedPriceRow.matched_service_id == Service.id)
+        .where(ParsedPriceRow.match_status == "needs_review")
+        .order_by(ParsedPriceRow.parsed_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    total = await db.scalar(
+        select(func.count())
+        .select_from(ParsedPriceRow)
+        .where(ParsedPriceRow.match_status == "needs_review")
+    )
+    return {
+        "total": total or 0,
+        "offset": offset,
+        "items": [
+            {
+                "id": pr.id,
+                "raw_name": pr.raw_name,
+                "raw_price": pr.raw_price,
+                "source_file": pr.source_file,
+                "clinic_name": clinic_name,
+                "city": clinic_city,
+                "parsed_at": pr.parsed_at.isoformat(),
+                "best_score": pr.match_score,
+                "suggested_service": suggested_name,
+                "suggested_service_id": pr.matched_service_id,
+            }
+            for pr, clinic_name, clinic_city, suggested_name in rows
+        ],
+    }
+
+
+# ─── POST /api/normalize/match ────────────────────────────────────────────────
+
+@router.post(
+    "/match",
+    summary="Ручное сопоставление нераспознанной услуги",
+    description="Привязывает сырую строку к эталонной услуге и создаёт PriceItem.",
+)
+async def manual_match(
+    body: ManualMatchRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.models import ParsedPriceRow, PriceItem
+    from app.normalizer.ingestion import parse_price
+
+    row = await db.get(ParsedPriceRow, body.parsed_row_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Строка не найдена")
+
+    price = parse_price(row.raw_price) if row.raw_price else None
+    if price is None:
+        raise HTTPException(status_code=400, detail="Не удалось распарсить цену")
+
+    target_date = row.parsed_at.date()
+    stmt = select(PriceItem).where(
+        (PriceItem.clinic_id == row.clinic_id)
+        & (PriceItem.service_id == body.service_id)
+        & (PriceItem.price_date == target_date)
+    )
+    result = await db.execute(stmt)
+    existing_price = result.scalar_one_or_none()
+
+    if existing_price:
+        existing_price.price_kzt = price
+        existing_price.source_name = row.raw_name
+        existing_price.match_score = 100
+        existing_price.is_verified = True
+    else:
+        new_price = PriceItem(
+            clinic_id=row.clinic_id,
+            service_id=body.service_id,
+            price_kzt=price,
+            price_date=target_date,
+            source_name=row.raw_name,
+            match_score=100,
+            is_verified=True,
+        )
+        db.add(new_price)
+
+    row.match_status = "manual_accepted"
+    row.matched_service_id = body.service_id
+    row.match_score = 100
+    
+    await db.commit()
+    return {"status": "success", "message": "Услуга успешно сопоставлена"}
+
+
+class ReviewActionRequest(BaseModel):
+    parsed_row_id: int
+
+
+@router.post("/review/approve", summary="Одобрить строку из очереди needs_review")
+async def approve_review_row(
+    body: ReviewActionRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.models import ParsedPriceRow, PriceItem
+    from app.normalizer.ingestion import parse_price
+
+    row = await db.get(ParsedPriceRow, body.parsed_row_id)
+    if not row or row.match_status != "needs_review":
+        raise HTTPException(status_code=404, detail="Строка не найдена или не в очереди review")
+    if not row.matched_service_id:
+        raise HTTPException(status_code=400, detail="Нет предложенной услуги для одобрения")
+
+    price = parse_price(row.raw_price) if row.raw_price else row.parsed_price_kzt
+    if price is None:
+        raise HTTPException(status_code=400, detail="Не удалось распарсить цену")
+
+    target_date = row.parsed_at.date()
+    existing = (
+        await db.execute(
+            select(PriceItem).where(
+                PriceItem.clinic_id == row.clinic_id,
+                PriceItem.service_id == row.matched_service_id,
+                PriceItem.price_date == target_date,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing:
+        existing.price_kzt = price
+        existing.source_name = row.raw_name
+        existing.match_score = row.match_score or 85
+        existing.is_verified = True
+        row.price_item_id = existing.id
+    else:
+        new_price = PriceItem(
+            clinic_id=row.clinic_id,
+            service_id=row.matched_service_id,
+            price_kzt=price,
+            price_date=target_date,
+            source_name=row.raw_name,
+            match_score=row.match_score or 85,
+            is_verified=True,
+        )
+        db.add(new_price)
+        await db.flush()
+        row.price_item_id = new_price.id
+
+    row.match_status = "manual_accepted"
+    await db.commit()
+    return {"status": "success", "message": "Строка одобрена и опубликована"}
+
+
+@router.post("/review/reject", summary="Отклонить строку из очереди review")
+async def reject_review_row(
+    body: ReviewActionRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    from app.models.models import ParsedPriceRow
+
+    row = await db.get(ParsedPriceRow, body.parsed_row_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Строка не найдена")
+    row.match_status = "skipped"
+    await db.commit()
+    return {"status": "success", "message": "Строка отклонена"}
+
+
+@router.get("/disputed", summary="Спорные / неверифицированные цены")
+async def list_disputed_prices(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    from app.models.models import PriceItem
+
+    stmt = (
+        select(PriceItem, Clinic.name, Clinic.city, Service.name)
+        .join(Clinic, PriceItem.clinic_id == Clinic.id)
+        .join(Service, PriceItem.service_id == Service.id)
+        .where(PriceItem.is_verified == False)  # noqa: E712
+        .order_by(PriceItem.price_date.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
+    total = await db.scalar(
+        select(func.count()).select_from(PriceItem).where(PriceItem.is_verified == False)  # noqa: E712
+    )
+    return {
+        "total": total or 0,
+        "offset": offset,
+        "items": [
+            {
+                "id": pi.id,
+                "clinic_id": pi.clinic_id,
+                "clinic_name": cname,
+                "city": ccity,
+                "service_id": pi.service_id,
+                "service_name": sname,
+                "price_kzt": float(pi.price_kzt),
+                "price_date": pi.price_date.isoformat(),
+                "source_name": pi.source_name,
+                "match_score": pi.match_score,
+                "is_verified": pi.is_verified,
+            }
+            for pi, cname, ccity, sname in rows
+        ],
+    }
+
+
+@router.post("/prices/{price_id}/verify", summary="Верифицировать цену")
+async def verify_price(price_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    from app.models.models import PriceItem
+
+    item = await db.get(PriceItem, price_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Цена не найдена")
+    item.is_verified = True
+    item.match_score = max(item.match_score or 0, 95)
+    await db.commit()
+    return {"status": "success", "message": "Цена верифицирована"}
+
+
+@router.post("/prices/{price_id}/reject", summary="Скрыть спорную цену")
+async def reject_price(price_id: int, db: Annotated[AsyncSession, Depends(get_db)]):
+    from app.models.models import PriceItem
+
+    item = await db.get(PriceItem, price_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Цена не найдена")
+    await db.delete(item)
+    await db.commit()
+    return {"status": "success", "message": "Цена удалена из публикации"}
 
 
 # ─── POST /api/normalize/preview ──────────────────────────────────────────────
@@ -421,7 +720,7 @@ async def upload_archive(
         filename = zip_info.filename
         basename = os.path.basename(filename)
         
-        if not (basename.endswith(".csv") or basename.endswith(".json")):
+        if not (basename.endswith((".csv", ".json", ".pdf", ".doc", ".docx", ".xls", ".xlsx"))):
             continue
             
         try:
