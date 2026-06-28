@@ -45,59 +45,46 @@
 
 ### Требования
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (Windows / Mac / Linux)
+- **Python 3.11+**
+- **Node.js 18+** и npm
 - Git
 
-### Вариант 1: Docker (рекомендуется — работает из коробки)
+### 1. Клонировать репозиторий
 
 ```bash
 git clone https://github.com/msmhanter-sketch/medtech.git
 cd medtech
-docker-compose up -d --build
 ```
 
-> **Первый запуск:** `docker build` скачивает образы (~2-3 мин). После старта база данных автоматически инициализируется из seed-файла с реальными данными (554 клиники, 11 363 цены).
-
-| Сервис | URL |
-|--------|-----|
-| 🌐 Фронтенд | http://localhost:3000 |
-| ⚙️ API (Swagger) | http://localhost:8000/docs |
-| 🛡️ Админ-панель | http://localhost:3000/admin |
-
-**Остановить:**
-```bash
-docker-compose down
-```
-
-**Остановить и удалить данные (сброс):**
-```bash
-docker-compose down -v
-```
-
----
-
-### Вариант 2: Локальный запуск (без Docker)
-
-#### Требования: Python 3.11+, Node.js 18+
-
-#### Бэкенд (FastAPI)
+### 2. Запустить бэкенд (FastAPI)
 
 ```bash
 cd backend
+
+# Создать виртуальное окружение
 python -m venv venv
 
-# Windows
+# Активировать (Windows)
 venv\Scripts\activate
-# macOS / Linux
-source venv/bin/activate
 
+# Активировать (macOS / Linux)
+# source venv/bin/activate
+
+# Установить зависимости
 pip install -r requirements.txt
+
+# Запустить API
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-**API:** http://localhost:8000 | **Swagger:** http://localhost:8000/docs
+| | URL |
+|-|-----|
+| ⚙️ API | http://localhost:8000 |
+| 📖 Swagger UI | http://localhost:8000/docs |
 
-#### Фронтенд (Next.js)
+### 3. Запустить фронтенд (Next.js)
+
+> В новом терминале:
 
 ```bash
 cd frontend
@@ -105,7 +92,12 @@ npm install
 npm run dev
 ```
 
-**Фронтенд:** http://localhost:3000
+| | URL |
+|-|-----|
+| 🌐 Сайт | http://localhost:3000 |
+| 🛡️ Админ | http://localhost:3000/admin |
+
+> **База данных** уже заполнена реальными данными (`backend/medtech.db`) — ничего дополнительно настраивать не нужно.
 
 ---
 
