@@ -1,4 +1,4 @@
-"""2GIS API: геокодинг и ссылки на маршруты (demo key из Platform Manager)."""
+"""2GIS API: геокодинг и ссылки на маршруты (development key from Platform Manager)."""
 import logging
 import os
 from typing import Any

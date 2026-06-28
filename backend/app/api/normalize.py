@@ -349,7 +349,9 @@ async def manual_match(
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
 
-    price = parse_price(row.raw_price) if row.raw_price else None
+    price = parse_price(row.raw_price) if row.raw_price else row.parsed_price_kzt
+    if price is None:
+        price = row.parsed_price_kzt
     if price is None:
         raise HTTPException(status_code=400, detail="Не удалось распарсить цену")
 

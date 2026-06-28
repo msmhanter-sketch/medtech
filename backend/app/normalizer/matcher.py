@@ -97,6 +97,7 @@ class ServiceMatcher:
         self.auto_threshold = auto_threshold
         self.review_threshold = review_threshold
         self._loaded = False
+        self._match_cache: dict[str, MatchResult] = {}
 
     async def load_index(self, db) -> int:
         """
@@ -118,6 +119,7 @@ class ServiceMatcher:
         services = result.scalars().all()
 
         self._index.clear()
+        self._match_cache.clear()
         self._flat_corpus.clear()
         self._corpus_to_entry.clear()
 
@@ -153,6 +155,7 @@ class ServiceMatcher:
         self._index.clear()
         self._flat_corpus.clear()
         self._corpus_to_entry.clear()
+        self._match_cache.clear()
 
         for svc in services_data:
             variants = build_search_corpus(svc["name"], svc.get("aliases"))
@@ -172,20 +175,23 @@ class ServiceMatcher:
 
     def match_single(self, raw_name: str, top_n: int = 5) -> MatchResult:
         """
-        Сопоставляет одно название услуги с эталонным индексом.
-
-        Args:
-            raw_name: Название из прайса клиники (любой формат).
-            top_n: Сколько кандидатов сохранить в top_candidates (для отладки).
-
-        Returns:
-            MatchResult с заполненными полями.
+        Сопоставляет одно название услуги с эталонным индексом (с кэшированием).
         """
         if not self._loaded:
             raise RuntimeError(
                 "Индекс не загружен. Вызовите load_index() или load_index_from_list()."
             )
+        if raw_name in self._match_cache:
+            return self._match_cache[raw_name]
 
+        result = self._match_single_uncached(raw_name, top_n)
+        self._match_cache[raw_name] = result
+        return result
+
+    def _match_single_uncached(self, raw_name: str, top_n: int = 5) -> MatchResult:
+        """
+        Сопоставляет одно название услуги с эталонным индексом (без кэша).
+        """
         normalized = normalize_text(raw_name)
         result = MatchResult(raw_input=raw_name, normalized_input=normalized)
 
@@ -208,18 +214,12 @@ class ServiceMatcher:
             return result
 
         # ── Fuzzy-поиск через rapidfuzz ───────────────────────────────────
-        # WRatio = взвешенный hybrid scorer:
-        #   - token_sort_ratio    (порядок слов не важен)
-        #   - token_set_ratio     (обрабатывает вложения: "МРТ мозга" ⊂ "МРТ головного мозга")
-        #   - partial_ratio       (если одна строка — подстрока другой)
-        #   - ratio               (классическое редакционное расстояние)
-        # Это оптимально для коротких медицинских фраз.
         candidates = process.extract(
             query=normalized,
             choices=self._flat_corpus,
             scorer=fuzz.WRatio,
             limit=top_n,
-            processor=None,  # мы уже нормализовали вручную
+            processor=None,
         )
 
         if not candidates:

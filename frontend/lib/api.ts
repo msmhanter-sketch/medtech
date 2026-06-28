@@ -47,6 +47,7 @@ export interface ClinicInCompare {
   source_parser?: string | null;
   source_parser_label?: string | null;
   official_source_url?: string | null;
+  has_online_booking?: boolean;
 }
 
 export interface ServiceRead {
@@ -57,6 +58,13 @@ export interface ServiceRead {
   unit: string | null;
 }
 
+export interface ServiceCityAvailability {
+  city: string;
+  offers_count: number;
+  min_price: number | null;
+  max_price: number | null;
+}
+
 export interface CompareResponse {
   service: ServiceRead;
   city: string;
@@ -64,6 +72,7 @@ export interface CompareResponse {
   total_clinics: number;
   min_price: number | null;
   max_price: number | null;
+  available_cities: ServiceCityAvailability[];
   clinics: ClinicInCompare[];
 }
 
@@ -107,6 +116,12 @@ export interface ScrapeSource {
   url: string;
   clinic: string;
   city: string;
+  schedule?: {
+    interval: string;
+    next_run: string | null;
+    last_run: string | null;
+    is_active: boolean;
+  };
 }
 
 export interface UnmatchedItem {
@@ -180,6 +195,22 @@ export interface ClinicSourceMeta {
   match_status?: string;
 }
 
+export interface ScrapeStatus {
+  running: boolean;
+  current_parser: string | null;
+  completed: number;
+  total: number;
+  errors_count: number;
+  completed_list: {
+    source: string;
+    clinic: string | null;
+    city: string | null;
+    status: "success" | "error";
+    rows: number;
+  }[];
+}
+
+
 
 // ─── Fetch helper ─────────────────────────────────────────────────────────────
 
@@ -233,6 +264,7 @@ export const api = {
     userLat?: number,
     userLon?: number,
     verifiedOnly?: boolean,
+    onlineBookingOnly?: boolean,
   ): Promise<CompareResponse> {
     const params = new URLSearchParams({ service_id: String(serviceId), city, sort });
     if (minPrice !== undefined) params.set("min_price", String(minPrice));
@@ -240,6 +272,7 @@ export const api = {
     if (userLat !== undefined) params.set("user_lat", String(userLat));
     if (userLon !== undefined) params.set("user_lon", String(userLon));
     if (verifiedOnly) params.set("verified_only", "true");
+    if (onlineBookingOnly) params.set("online_booking_only", "true");
     return apiFetch<CompareResponse>(`/clinics/compare?${params}`);
   },
 
@@ -248,6 +281,9 @@ export const api = {
     total_clinics: number;
     total_services: number;
     total_categories?: number;
+    total_cities?: number;
+    total_logs?: number;
+    error_logs?: number;
     fresh_prices_30d?: number;
     sources_loaded?: number;
     parsed_rows?: number;
@@ -309,9 +345,10 @@ export const api = {
     return apiFetch(`/history/clinic/${clinicId}/service/${serviceId}`);
   },
 
-  getPriceChanges(limit = 50, offset = 0, city?: string): Promise<{ total: number; items: PriceChangeEvent[] }> {
+  getPriceChanges(limit = 50, offset = 0, city?: string, serviceId?: number): Promise<{ total: number; items: PriceChangeEvent[] }> {
     const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     if (city) params.set("city", city);
+    if (serviceId) params.set("service_id", String(serviceId));
     return apiFetch(`/history/changes?${params}`);
   },
 
@@ -319,7 +356,7 @@ export const api = {
     return apiFetch(`/history/sources/${clinicId}`);
   },
 
-  getScrapeStatus(): Promise<{ running: boolean }> {
+  getScrapeStatus(): Promise<ScrapeStatus> {
     return apiFetch("/scrape/status");
   },
 
@@ -330,6 +367,16 @@ export const api = {
   async triggerScrapeSource(sourceId: string): Promise<{ status: string; message?: string }> {
     const res = await fetch(`/api/scrape/run?source=${encodeURIComponent(sourceId)}`, { method: "POST" });
     if (!res.ok) throw new Error("Не удалось запустить парсер");
+    return res.json();
+  },
+
+  async updateParserSchedule(parserName: string, interval: string, isActive = true): Promise<{ status: string }> {
+    const res = await fetch("/api/scrape/schedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ parser_name: parserName, interval, is_active: isActive }),
+    });
+    if (!res.ok) throw new Error("Не удалось сохранить расписание");
     return res.json();
   },
 

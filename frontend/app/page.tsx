@@ -1,5 +1,7 @@
-import { CompareResponse } from "@/lib/api";
+import { CompareResponse, SortOrder } from "@/lib/api";
 import ClientHome from "./ClientHome";
+
+const SORT_ORDERS: SortOrder[] = ["price_asc", "price_desc", "rating_desc", "name_asc", "distance_asc", "date_desc"];
 
 export const metadata = {
   title: "MedServicePrice.kz — Сравнение цен на медицинские услуги",
@@ -12,7 +14,9 @@ export default async function HomePage({
   searchParams: { city?: string; service_id?: string; sort?: string };
 }) {
   const city = searchParams.city || "Астана";
-  const sort = (searchParams.sort as any) || "price_asc";
+  const sort: SortOrder = SORT_ORDERS.includes(searchParams.sort as SortOrder)
+    ? (searchParams.sort as SortOrder)
+    : "price_asc";
   const serviceId = searchParams.service_id ? parseInt(searchParams.service_id, 10) : null;
 
   let initialCompareData: CompareResponse | null = null;

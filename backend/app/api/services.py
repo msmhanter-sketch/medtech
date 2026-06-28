@@ -139,12 +139,20 @@ async def search_services(
     )
 
     if len(q.strip()) >= 2:
+        q_clean = q.lower().strip().replace("ё", "е")
+        for noise in ["анализ крови на ", "анализ на ", "прием ", "приём ", "узи ", "мрт ", "кт ", "исследование на "]:
+            if q_clean.startswith(noise):
+                q_clean = q_clean[len(noise):].strip()
+        if not q_clean:
+            q_clean = q.lower().strip().replace("ё", "е")
+
         stmt = stmt.where(
-            # ILIKE — case-insensitive LIKE, работает с кириллицей
-            Service.name.ilike(f"%{q}%")
+            or_(
+                func.replace(func.lower(Service.name), "ё", "е").ilike(f"%{q_clean}%"),
+                func.replace(func.lower(Service.aliases), "ё", "е").ilike(f"%{q_clean}%")
+            )
         ).order_by(
-            # Точные совпадения в начале строки идут первыми (strpos вернет 1)
-            func.strpos(func.lower(Service.name), q.lower()),
+            func.strpos(func.replace(func.lower(Service.name), "ё", "е"), q_clean),
             Service.name,
         )
     else:

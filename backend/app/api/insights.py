@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import numpy as np
 
 from app.core.database import get_db
-from app.models.models import Service, PriceItem, Clinic
+from app.models.models import Service, ServiceCategory, PriceItem, Clinic
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
@@ -15,6 +15,12 @@ async def get_service_insights(service_id: int, city: str = "Алматы", db: 
     service = service_res.scalar_one_or_none()
     if not service:
         raise HTTPException(status_code=404, detail="Service not found")
+
+    category_name = ""
+    if service.category_id:
+        cat = await db.get(ServiceCategory, service.category_id)
+        if cat:
+            category_name = cat.name
 
     prices_res = await db.execute(
         select(PriceItem, Clinic)
@@ -89,6 +95,7 @@ async def get_service_insights(service_id: int, city: str = "Алматы", db: 
 
     return {
         "service_name": service.name,
+        "category_name": category_name,
         "city": city,
         "stats": {
             "min": int(min_price),
@@ -107,4 +114,5 @@ async def get_service_insights(service_id: int, city: str = "Алматы", db: 
         "distribution": histogram,
         "history": history_data,
         "history_available": len(history_data) >= 2,
+        "diff_percent": diff_percent,
     }

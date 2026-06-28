@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sqlalchemy import func, select
 
 from app.core.database import AsyncSessionLocal
-from app.models.models import Clinic, ParsedPriceRow, Service
+from app.models.models import Clinic, ParsedPriceRow, Service, ParserLog
 from app.normalizer.ingestion import RawPriceRow, ingest_price_list, parse_price
 from app.normalizer.matcher import MatchResult, ServiceMatcher
 from scrapers import ALL_SCRAPERS
@@ -49,17 +49,18 @@ async def get_or_create_clinic(db, meta: dict) -> Clinic:
     meta = enrich_clinic_meta(dict(meta))
     clinic = None
     source_id = meta.get("source_id")
-    external_id = meta.get("external_id")
-    if source_id and external_id:
+    # Match primarily by source_id (most reliable unique key from scrapers)
+    if source_id:
         res = await db.execute(
-            select(Clinic).where(Clinic.source_id == source_id, Clinic.external_id == external_id)
+            select(Clinic).where(Clinic.source_id == source_id)
         )
-        clinic = res.scalar_one_or_none()
+        clinic = res.scalars().first()
+    # Fallback: match by name + city (use first() in case of duplicates)
     if clinic is None:
         res = await db.execute(
             select(Clinic).where(Clinic.name == meta["name"], Clinic.city == meta["city"])
         )
-        clinic = res.scalar_one_or_none()
+        clinic = res.scalars().first()
     if clinic:
         for key, val in meta.items():
             if val is not None and hasattr(clinic, key):
@@ -78,6 +79,7 @@ async def get_or_create_clinic(db, meta: dict) -> Clinic:
         rating=Decimal(str(meta["rating"])) if meta.get("rating") else None,
         source_id=meta.get("source_id"),
         external_id=meta.get("external_id"),
+        has_online_booking=bool(meta.get("has_online_booking", False)),
     )
     db.add(clinic)
     await db.flush()
@@ -112,6 +114,13 @@ async def ingest_scrape_result(
     clinic = await get_or_create_clinic(db, clinic_meta or scraper.clinic_meta())
     price_date = datetime.now(timezone.utc).date()
     parsed_at = datetime.now(timezone.utc)
+    
+    # Дедупликация: очищаем старые сырые данные для этой клиники перед вставкой новых
+    from sqlalchemy import delete
+    await db.execute(
+        delete(ParsedPriceRow).where(ParsedPriceRow.clinic_id == clinic.id)
+    )
+    
     candidates: list[tuple[RawPriceRow, MatchResult]] = []
     best: dict[int, tuple[RawPriceRow, MatchResult, float]] = {}
 
@@ -213,28 +222,70 @@ async def run_all(scraper_ids: list[str] | None = None, deep_documents: bool = T
     from app.services.db_migrate import ensure_clinic_columns
     await ensure_clinic_columns()
 
+    try:
+        from app.api import scrape as api_scrape
+    except ImportError:
+        api_scrape = None
+
+    total_scrapers = len([s for s in ALL_SCRAPERS if not scraper_ids or s().source_id in scraper_ids])
+    if api_scrape:
+        api_scrape._scrape_progress.update({
+            "running": True,
+            "total": total_scrapers,
+            "completed": 0,
+            "errors_count": 0,
+            "completed_list": [],
+            "current_parser": None
+        })
+
     async with AsyncSessionLocal() as db:
         matcher = ServiceMatcher()
         await matcher.load_index(db)
         await db.commit()
 
+        scrape_cache = {}
+
         for ScraperCls in ALL_SCRAPERS:
             scraper = ScraperCls()
             if scraper_ids and scraper.source_id not in scraper_ids:
                 continue
-            log.info("Скрапинг %s (%s)...", scraper.source_name, scraper.source_url)
-            try:
-                scrape = await asyncio.to_thread(scraper.scrape)
-            except Exception as exc:
-                log.error("Скрапер %s упал: %s", scraper.source_id, exc)
+            if api_scrape:
+                api_scrape._scrape_progress["current_parser"] = scraper.source_id
+
+            cached_items = scrape_cache.get(scraper.source_url)
+            if cached_items is not None:
+                log.info("Скрапинг %s (%s) -> [Используем кэш сессии]", scraper.source_name, scraper.source_url)
                 scrape = ScrapeResult(
                     source_id=scraper.source_id,
                     source_name=scraper.source_name,
                     source_url=scraper.source_url,
                     clinic_name=scraper.clinic_name,
                     city=scraper.city,
-                    errors=[str(exc)],
+                    items=list(cached_items),
+                    errors=[],
                 )
+            else:
+                log.info("Скрапинг %s (%s)...", scraper.source_name, scraper.source_url)
+                try:
+                    scrape = await asyncio.to_thread(scraper.scrape)
+                    if scrape.items and not scrape.errors and not scrape.branches:
+                        scrape_cache[scraper.source_url] = scrape.items
+                except Exception as exc:
+                    log.error("Скрапер %s упал: %s", scraper.source_id, exc)
+                    db.add(ParserLog(
+                        parser_name=scraper.source_id,
+                        status="error",
+                        error_message=str(exc)
+                    ))
+                    await db.commit()
+                    scrape = ScrapeResult(
+                        source_id=scraper.source_id,
+                        source_name=scraper.source_name,
+                        source_url=scraper.source_url,
+                        clinic_name=scraper.clinic_name,
+                        city=scraper.city,
+                        errors=[str(exc)],
+                    )
             if scrape.branches:
                 log.info("  → %s филиалов (мульти-клиника)", len(scrape.branches))
                 branch_stats = []
@@ -262,6 +313,14 @@ async def run_all(scraper_ids: list[str] | None = None, deep_documents: bool = T
                     "errors": scrape.errors,
                     "branch_details": branch_stats[:5],
                 }
+                db.add(ParserLog(
+                    parser_name=scraper.source_id,
+                    status="success" if not scrape.errors else "error",
+                    error_message="; ".join(scrape.errors) if scrape.errors else None,
+                    records_processed=stats.get("scraped", 0),
+                    records_inserted=stats.get("ingested", 0)
+                ))
+                await db.commit()
             else:
                 if scrape.items:
                     filtered, skipped = filter_scraped_items(scrape.items)
@@ -293,7 +352,31 @@ async def run_all(scraper_ids: list[str] | None = None, deep_documents: bool = T
                     log.warning("  ! %s", err)
                 stats = await ingest_scrape_result(db, matcher, scrape, scraper)
                 stats.update(stats_pre)
+                db.add(ParserLog(
+                    parser_name=scraper.source_id,
+                    status="success" if not scrape.errors else "error",
+                    error_message="; ".join(scrape.errors) if scrape.errors else None,
+                    records_processed=stats.get("scraped", 0),
+                    records_inserted=stats.get("ingested", 0)
+                ))
+                await db.commit()
             results.append(stats)
+            completed_list = [
+                {
+                    "source": r.get("source"),
+                    "clinic": r.get("clinic"),
+                    "city": r.get("city"),
+                    "status": "error" if r.get("errors") else "success",
+                    "rows": r.get("scraped", 0)
+                }
+                for r in results
+            ]
+            if api_scrape:
+                api_scrape._scrape_progress.update({
+                    "completed": len(results),
+                    "errors_count": sum(1 for r in results if r.get("errors")),
+                    "completed_list": completed_list
+                })
 
         clinics = await db.scalar(select(func.count()).select_from(Clinic))
         svc = await db.scalar(select(func.count()).select_from(Service))

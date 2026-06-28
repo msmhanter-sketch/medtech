@@ -7,6 +7,7 @@ import { Sparkles, TrendingDown } from "lucide-react";
 
 interface InsightData {
   service_name: string;
+  category_name?: string;
   city: string;
   stats: { min: number; max: number; avg: number; median: number; std_dev: number; total_clinics: number };
   best_deal: { clinic_name: string | null; price: number; diff_percent: number };
@@ -14,6 +15,7 @@ interface InsightData {
   distribution: { range: string; count: number }[];
   history: { period: string; price: number }[];
   history_available?: boolean;
+  diff_percent?: number;
 }
 
 export function AIPriceInsights({ serviceId, city, compact = false }: { serviceId: number; city: string; compact?: boolean }) {
@@ -45,9 +47,27 @@ export function AIPriceInsights({ serviceId, city, compact = false }: { serviceI
   if (compact) {
     return (
       <div className="card p-5">
-        <h3 className="mb-4 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--accent)]">
-          <Sparkles size={14} /> AI аналитика цен
-        </h3>
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h3 className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.08em] text-[var(--accent)]">
+            <Sparkles size={14} /> AI аналитика цен
+          </h3>
+          <div className="flex gap-1 rounded-lg border border-[var(--border)] p-0.5">
+            <button
+              type="button"
+              onClick={() => setActiveTab("dist")}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${activeTab === "dist" ? "bg-teal-50 text-[var(--accent)]" : "text-[var(--text-muted)]"}`}
+            >
+              Распред.
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("history")}
+              className={`rounded-md px-2 py-0.5 text-[10px] font-bold ${activeTab === "history" ? "bg-teal-50 text-[var(--accent)]" : "text-[var(--text-muted)]"}`}
+            >
+              История
+            </button>
+          </div>
+        </div>
         <div className="mb-4 grid grid-cols-3 gap-2 text-center">
           <div className="rounded-lg bg-[var(--bg-soft)] px-2 py-2.5">
             <div className="text-[10px] text-[var(--text-muted)]">Мин</div>
@@ -63,19 +83,31 @@ export function AIPriceInsights({ serviceId, city, compact = false }: { serviceI
           </div>
         </div>
         <div className="h-28">
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={data.distribution} margin={{ top: 0, right: 0, left: -24, bottom: 0 }}>
-              <XAxis dataKey="range" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
-              <Tooltip
-                contentStyle={{ borderRadius: 10, border: "1px solid #e5eaef", fontSize: 12 }}
-              />
-              <Bar dataKey="count" radius={[4, 4, 0, 0]}>
-                {data.distribution.map((_, index) => (
-                  <Cell key={`cell-${index}`} fill={index === 0 ? "#ef4444" : "#fca5a5"} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+          {activeTab === "dist" ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.distribution} margin={{ top: 0, right: 0, left: -24, bottom: 0 }}>
+                <XAxis dataKey="range" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e5eaef", fontSize: 12 }} />
+                <Bar dataKey="count" radius={[4, 4, 0, 0]}>
+                  {data.distribution.map((_, index) => (
+                    <Cell key={`cell-${index}`} fill={index === 0 ? "#ef4444" : "#fca5a5"} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : data.history.length >= 2 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={data.history} margin={{ top: 0, right: 0, left: -24, bottom: 0 }}>
+                <XAxis dataKey="period" tick={{ fontSize: 9, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ borderRadius: 10, border: "1px solid #e5eaef", fontSize: 12 }} />
+                <Line type="monotone" dataKey="price" stroke="#0d9488" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="flex h-full items-center justify-center text-center text-[11px] text-[var(--text-muted)] px-2">
+              История по городу появится после нескольких запусков парсера
+            </p>
+          )}
         </div>
         <p className="mt-3 text-[12px] leading-relaxed text-[var(--text-secondary)]">
           {data.ai_advice || `Рынок стабилен. Лучшее предложение — ${data.best_deal.clinic_name || "см. таблицу"}.`}

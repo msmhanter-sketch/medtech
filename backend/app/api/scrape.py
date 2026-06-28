@@ -1,9 +1,7 @@
 """API: запуск веб-скрапинга."""
-import json
 import logging
-from pathlib import Path
-
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from pydantic import BaseModel
 
 from scrape_and_ingest import SCRAPE_LOG_PATH, run_all
 from scrapers import ALL_SCRAPERS
@@ -12,6 +10,15 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/scrape", tags=["scraping"])
 
 _scrape_running = False
+
+_scrape_progress = {
+    "running": False,
+    "current_parser": None,
+    "completed": 0,
+    "total": 0,
+    "errors_count": 0,
+    "completed_list": []
+}
 
 SUPPORTED_FORMATS = [
     {"format": "HTML", "status": "supported", "module": "scrapers/*"},
@@ -23,6 +30,24 @@ SUPPORTED_FORMATS = [
 
 @router.get("/sources")
 async def list_sources():
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import ParserSchedule
+    from sqlalchemy import select
+
+    schedules_map = {}
+    try:
+        async with AsyncSessionLocal() as db:
+            res = await db.execute(select(ParserSchedule))
+            for s in res.scalars().all():
+                schedules_map[s.parser_name] = {
+                    "interval": s.interval,
+                    "next_run": s.next_run.isoformat() if s.next_run else None,
+                    "last_run": s.last_run.isoformat() if s.last_run else None,
+                    "is_active": s.is_active
+                }
+    except Exception as e:
+        log.warning(f"Failed to load schedules for sources: {e}")
+
     return [
         {
             "id": s.source_id,
@@ -30,9 +55,16 @@ async def list_sources():
             "url": s.source_url,
             "clinic": s.clinic_name,
             "city": s.city,
+            "schedule": schedules_map.get(s.source_id, {
+                "interval": "manual",
+                "next_run": None,
+                "last_run": None,
+                "is_active": True
+            })
         }
         for s in (cls() for cls in ALL_SCRAPERS)
     ]
+
 
 
 @router.get("/capabilities")
@@ -64,18 +96,27 @@ async def scrape_capabilities():
 
 @router.get("/logs")
 async def scrape_logs(limit: int = Query(10, ge=1, le=100)):
-    path = Path(SCRAPE_LOG_PATH)
-    if not path.exists():
-        return {"items": []}
+    from app.core.database import AsyncSessionLocal
+    from sqlalchemy import select
+    from app.models.models import ParserLog
 
-    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
-    items = []
-    for line in lines:
-        try:
-            items.append(json.loads(line))
-        except json.JSONDecodeError:
-            log.warning("Skipping invalid scrape log line")
-    return {"items": items}
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ParserLog).order_by(ParserLog.created_at.desc()).limit(limit)
+        )
+        logs = result.scalars().all()
+
+        items = []
+        for log_entry in logs:
+            items.append({
+                "source": log_entry.parser_name,
+                "status": log_entry.status,
+                "errors": [log_entry.error_message] if log_entry.error_message else [],
+                "rows": log_entry.records_processed,
+                "inserted": log_entry.records_inserted,
+                "time": log_entry.created_at.isoformat()
+            })
+        return {"items": items}
 
 
 @router.post("/run")
@@ -83,22 +124,42 @@ async def trigger_scrape(
     background_tasks: BackgroundTasks,
     source: list[str] | None = Query(None, description="ID источников"),
     sync: bool = Query(False, description="Дождаться завершения (для отладки)"),
-    deep_documents: bool = Query(True, description="Обход PDF/DOCX/Excel на сайтах клиник"),
+    deep_documents: bool = Query(False, description="Обход PDF/DOCX/Excel на сайтах клиник"),
 ):
-    global _scrape_running
-    if _scrape_running and not sync:
+    global _scrape_running, _scrape_progress
+    if _scrape_running:
         raise HTTPException(status_code=409, detail="Скрапинг уже выполняется")
 
+    _scrape_running = True
+    _scrape_progress.update({
+        "running": True,
+        "current_parser": None,
+        "completed": 0,
+        "total": 0,
+        "errors_count": 0,
+        "completed_list": [],
+    })
+
     async def job():
-        global _scrape_running
-        _scrape_running = True
+        global _scrape_running, _scrape_progress
         try:
             await run_all(source, deep_documents=deep_documents)
+        except Exception:
+            log.exception("Background scrape failed")
+            _scrape_progress["errors_count"] += 1
         finally:
             _scrape_running = False
+            _scrape_progress["running"] = False
+            _scrape_progress["current_parser"] = None
 
     if sync:
-        return {"status": "completed", "results": await run_all(source, deep_documents=deep_documents)}
+        try:
+            results = await run_all(source, deep_documents=deep_documents)
+            return {"status": "completed", "results": results}
+        finally:
+            _scrape_running = False
+            _scrape_progress["running"] = False
+            _scrape_progress["current_parser"] = None
 
     background_tasks.add_task(job)
     return {"status": "started", "message": "Скрапинг запущен в фоне (HTML + документы)"}
@@ -106,4 +167,48 @@ async def trigger_scrape(
 
 @router.get("/status")
 async def scrape_status():
-    return {"running": _scrape_running}
+    global _scrape_progress
+    return _scrape_progress
+
+
+
+class ScheduleUpdate(BaseModel):
+    parser_name: str
+    interval: str  # manual | hourly | twice_daily | daily | weekly
+    is_active: bool = True
+
+
+@router.post("/schedule")
+async def update_schedule(data: ScheduleUpdate):
+    from app.core.database import AsyncSessionLocal
+    from app.models.models import ParserSchedule
+    from app.services.scheduler import calculate_next_run
+    from sqlalchemy import select
+    from datetime import datetime, timezone
+
+    if data.interval not in ("manual", "hourly", "twice_daily", "daily", "weekly"):
+        raise HTTPException(status_code=400, detail="Неподдерживаемый интервал")
+
+    async with AsyncSessionLocal() as db:
+        stmt = select(ParserSchedule).where(ParserSchedule.parser_name == data.parser_name)
+        res = await db.execute(stmt)
+        sched = res.scalar_one_or_none()
+        if not sched:
+            sched = ParserSchedule(parser_name=data.parser_name)
+            db.add(sched)
+
+        sched.interval = data.interval
+        sched.is_active = data.is_active
+        if data.interval == "manual":
+            sched.next_run = None
+        else:
+            sched.next_run = calculate_next_run(data.interval, datetime.now(timezone.utc))
+
+        await db.commit()
+        return {
+            "status": "success",
+            "parser_name": sched.parser_name,
+            "interval": sched.interval,
+            "next_run": sched.next_run.isoformat() if sched.next_run else None,
+            "is_active": sched.is_active
+        }

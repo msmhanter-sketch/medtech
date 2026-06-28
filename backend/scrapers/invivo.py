@@ -48,39 +48,12 @@ class InvivoScraper(BaseScraper):
                                 source_url=self.source_url
                             ))
         except Exception as e:
-            log.warning("InvivoScraper: не удалось получить данные (%s), используем резервный кэш.", e)
+            log.warning("InvivoScraper: не удалось получить данные (%s).", e)
+            result.errors.append(f"Invivo: {e}")
 
-        # Fallback (Резервный кэш) если сайт недоступен или защищен (404/403/Captcha)
-        if not items:
-            log.info("InvivoScraper: загрузка резервных данных для демо.")
-            mock_data = [
-                ("Общий анализ крови (ОАК) автоматизированный", 2200),
-                ("Общий анализ мочи (ОАМ)", 900),
-                ("Коагулограмма (АЧТВ, ПВ, МНО, Фибриноген)", 4500),
-                ("ПЦР-тест на COVID-19", 6500),
-                ("Биохимический анализ крови, базовый", 7800),
-                ("Витамин D (25-OH Vitamin D)", 5500),
-                ("ТТГ (Тиреотропный гормон)", 1800),
-                ("Гликированный гемоглобин (HbA1c)", 2500),
-                ("Железо сывороточное", 1200),
-                ("Ферритин", 2400),
-                ("АЛТ (Аланинаминотрансфераза)", 900),
-                ("АСТ (Аспартатаминотрансфераза)", 900),
-                ("Холестерин общий", 1100),
-                ("Глюкоза в крови", 800),
-                ("Тестостерон общий", 2500)
-            ]
-            for name, price in mock_data:
-                items.append(ScrapedPrice(
-                    name=name,
-                    price=price,
-                    source_url=self.source_url,
-                    duration_days=1
-                ))
-                
         result.items, _ = filter_scraped_items(items)
         if not result.items:
-            result.errors.append("Не удалось извлечь данные со страницы Invivo и резервный кэш пуст")
+            result.errors.append("Не удалось извлечь реальные данные: Invivo")
             
         return result
 

@@ -227,14 +227,14 @@ def run_report() -> Path:
             from parsers.doc_parser import parse_doc as parse_doc_fn
             from parsers.price_text import parse_price_lines
 
-            fake_text = (
+            sample_text = (
                 "Прейскурант действует с 01.06.2025\n"
                 "Общий анализ крови 2500\n"
                 "СОЭ 1200\n"
                 "УЗИ брюшной полости 8500 тг\n"
             )
-            rows = parse_price_lines(fake_text)
-            doc_case["method"] = "price_text fallback (LibreOffice не найден)"
+            rows = parse_price_lines(sample_text)
+            doc_case["method"] = "price_text sample parse (LibreOffice не найден)"
             doc_case["rows"] = len(rows)
             body = (
                 f"**Модуль:** `parsers/doc_parser.py`\n\n"

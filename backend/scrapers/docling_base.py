@@ -1,50 +1,39 @@
-"""Базовый класс для парсинга PDF прайсов через Docling/Marker."""
-import os
+"""Base scraper helper for PDF price lists parsed through Docling."""
 
+from parsers.price_text import parse_price_lines
 from scrapers.base import BaseScraper, ScrapedPrice, ScrapeResult
 
 
 class DoclingBaseScraper(BaseScraper):
-    """
-    Использует библиотеку Docling (IBM) для интеллектуального парсинга сложных PDF прайс-листов.
-    Позволяет извлекать таблицы и текст с высокой точностью.
-    
-    Для работы требуется: `pip install docling`
-    """
+    """Use Docling to convert a PDF into markdown, then extract real price rows."""
 
     def scrape_pdf_with_docling(self, pdf_url_or_path: str) -> ScrapeResult:
         res = self._result()
-        
+
         try:
             from docling.document_converter import DocumentConverter
-            
-            # Инициализация конвертера (может потребовать скачивания весов моделей при первом запуске)
+
             converter = DocumentConverter()
             result = converter.convert(pdf_url_or_path)
-            
-            # Извлечение данных в Markdown
-            md_text = result.document.export_to_markdown()
-            
-            # TODO: Для каждого конкретного прайса нужно писать логику обхода таблиц.
-            # В Docling таблицы доступны через result.document.tables
-            for table in result.document.tables:
-                # Пример логики (требует адаптации под структуру PDF)
-                # df = table.export_to_dataframe()
-                pass
-                
-            res.errors.append("Docling успешно распарсил PDF. Требуется написать правила извлечения (regex или pandas) для таблиц.")
-            
-            # Заглушка для демонстрации
-            res.items.append(ScrapedPrice(
-                name="[DEMO] Docling Extracted PDF Item",
-                price=5000,
-                source_url=pdf_url_or_path,
-                extra={"markdown_preview": md_text[:200] if md_text else ""}
-            ))
-            
+            md_text = result.document.export_to_markdown() or ""
+
+            rows = parse_price_lines(md_text)
+            for row in rows:
+                res.items.append(
+                    ScrapedPrice(
+                        name=str(row["name"]),
+                        price=row["price"],
+                        source_url=pdf_url_or_path,
+                        extra={"source_type": "docling_markdown"},
+                    )
+                )
+
+            if not res.items:
+                res.errors.append("Docling parsed the document, but no real price rows were extracted")
+
         except ImportError:
-            res.errors.append("Пакет docling не установлен. Выполните: pip install docling")
+            res.errors.append("Docling package is not installed. Run: pip install docling")
         except Exception as e:
             res.errors.append(f"Docling error: {e}")
-            
+
         return res

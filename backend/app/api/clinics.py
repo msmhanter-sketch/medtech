@@ -15,24 +15,30 @@ import math
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import asc, desc, func, or_, select
+from sqlalchemy import asc, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, is_sqlite
 from app.core.redis_client import get_redis, is_redis_available
 from app.models.models import Clinic, ParsedPriceRow, PriceItem, Service
-from app.schemas.clinic import ClinicInCompare, ClinicPriceItem, ClinicRead, CompareResponse, ServiceRead
+from app.schemas.clinic import ClinicInCompare, ClinicPriceItem, ClinicRead, CompareResponse, ServiceCityAvailability, ServiceRead
 from app.utils.sources import build_source_meta
 
 log = logging.getLogger(__name__)
 
-# Национальные сети: единый прайс, показываем во всех городах
-NATIONAL_LAB_NAMES = ("INVITRO", "HELIX")
+# Фильтрация строго по городу — каждый скрапер создаёт клинику с явным городом
 
 router = APIRouter(prefix="/api/clinics", tags=["clinics"])
 
 # Кэш сравнения: 5 минут (цены обновляются редко)
 COMPARE_CACHE_TTL = 300
+
+
+def city_equals(column, city: str):
+    normalized = city.strip()
+    if is_sqlite:
+        return func.trim(column) == normalized
+    return func.lower(func.trim(column)) == normalized.lower()
 
 def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     if None in (lat1, lon1, lat2, lon2):
@@ -56,6 +62,56 @@ class SortOrder(str, Enum):
     name_asc = "name_asc"
     distance_asc = "distance_asc"
     date_desc = "date_desc"
+
+
+async def _fetch_service_city_availability(
+    db: AsyncSession,
+    service_id: int,
+    max_age_days: int,
+) -> list[ServiceCityAvailability]:
+    cutoff_date = date.today() - timedelta(days=max_age_days)
+    latest_price_subq = (
+        select(
+            PriceItem.clinic_id,
+            func.max(PriceItem.price_date).label("latest_date"),
+        )
+        .where(
+            PriceItem.service_id == service_id,
+            PriceItem.price_date >= cutoff_date,
+        )
+        .group_by(PriceItem.clinic_id)
+        .subquery("service_city_latest_price")
+    )
+
+    stmt = (
+        select(
+            Clinic.city.label("city"),
+            func.count().label("offers_count"),
+            func.min(PriceItem.price_kzt).label("min_price"),
+            func.max(PriceItem.price_kzt).label("max_price"),
+        )
+        .join(latest_price_subq, Clinic.id == latest_price_subq.c.clinic_id)
+        .join(
+            PriceItem,
+            (PriceItem.clinic_id == Clinic.id)
+            & (PriceItem.service_id == service_id)
+            & (PriceItem.price_date == latest_price_subq.c.latest_date),
+        )
+        .where(Clinic.is_active == True)  # noqa: E712
+        .group_by(Clinic.city)
+        .order_by(func.count().desc(), Clinic.city.asc())
+    )
+
+    result = await db.execute(stmt)
+    return [
+        ServiceCityAvailability(
+            city=row["city"],
+            offers_count=row["offers_count"],
+            min_price=row["min_price"],
+            max_price=row["max_price"],
+        )
+        for row in result.mappings().all()
+    ]
 
 
 # ─── GET /api/clinics/compare ──────────────────────────────────────────────────
@@ -88,6 +144,7 @@ async def compare_clinics(
     min_price: Optional[Decimal] = Query(None, ge=0, description="Минимальная цена в KZT"),
     max_price: Optional[Decimal] = Query(None, ge=0, description="Максимальная цена в KZT"),
     verified_only: bool = Query(False, description="Только верифицированные цены"),
+    online_booking_only: bool = Query(False, description="Только клиники с онлайн-записью"),
     max_age_days: int = Query(30, ge=1, le=365, description="Максимальный возраст цены в днях"),
     user_lat: Optional[float] = Query(None, description="Широта пользователя"),
     user_lon: Optional[float] = Query(None, description="Долгота пользователя"),
@@ -102,8 +159,9 @@ async def compare_clinics(
     """
     # Формируем уникальный ключ кэша из всех параметров запроса
     cache_key = (
-        f"compare:svc={service_id}:city={city}:sort={sort.value}"
-        f":min={min_price}:max={max_price}:verified={verified_only}:age={max_age_days}"
+        f"compare:v2:svc={service_id}:city={city}:sort={sort.value}"
+        f":min={min_price}:max={max_price}:verified={verified_only}"
+        f":booking={online_booking_only}:age={max_age_days}"
         f":lat={user_lat}:lon={user_lon}"
     )
 
@@ -169,6 +227,7 @@ async def compare_clinics(
             Clinic.working_hours,
             Clinic.website_url,
             Clinic.logo_url,
+            Clinic.has_online_booking,
             PriceItem.price_kzt,
             PriceItem.price_date,
             PriceItem.is_verified,
@@ -190,13 +249,7 @@ async def compare_clinics(
         )
         .where(
             Clinic.is_active == True,  # noqa: E712
-            or_(
-                Clinic.city.ilike(f"%{city}%"),
-                *[
-                    Clinic.name.ilike(f"%{prefix}%")
-                    for prefix in NATIONAL_LAB_NAMES
-                ],
-            ),
+            city_equals(Clinic.city, city),
         )
     )
 
@@ -207,6 +260,8 @@ async def compare_clinics(
         stmt = stmt.where(PriceItem.price_kzt <= max_price)
     if verified_only:
         stmt = stmt.where(PriceItem.is_verified == True)  # noqa: E712
+    if online_booking_only:
+        stmt = stmt.where(Clinic.has_online_booking == True)  # noqa: E712
 
     # Применяем SQL-сортировку (если не по дистанции)
     if sort != SortOrder.distance_asc:
@@ -229,6 +284,8 @@ async def compare_clinics(
             detail="Ошибка при получении данных. Попробуйте позже.",
         )
 
+    available_cities = await _fetch_service_city_availability(db, service_id, max_age_days)
+
     if not rows:
         # Данные есть, но нет клиник в этом городе — не ошибка, пустой список
         return CompareResponse(
@@ -238,6 +295,7 @@ async def compare_clinics(
             total_clinics=0,
             min_price=None,
             max_price=None,
+            available_cities=available_cities,
             clinics=[],
         )
 
@@ -275,6 +333,7 @@ async def compare_clinics(
         total_clinics=len(clinics_out),
         min_price=min_p,
         max_price=max_p,
+        available_cities=available_cities,
         clinics=clinics_out,
     )
 
@@ -317,7 +376,7 @@ async def list_clinics(
         .limit(page_size)
     )
     if city:
-        stmt = stmt.where(Clinic.city.ilike(f"%{city}%"))
+        stmt = stmt.where(city_equals(Clinic.city, city))
 
     result = await db.execute(stmt)
     clinics = result.scalars().all()

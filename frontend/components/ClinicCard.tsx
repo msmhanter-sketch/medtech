@@ -14,6 +14,7 @@ import {
   Clock,
   Bell,
   Navigation,
+  History,
 } from "lucide-react";
 import { ClinicInCompare, formatPrice, formatRating, api } from "@/lib/api";
 import { build2gisRouteUrl, build2gisAppUrl, buildGoogleMapsRouteUrl, buildSourceUrl } from "@/lib/maps";
@@ -26,16 +27,18 @@ interface ClinicCardProps {
   minPrice: number | null;
   maxPrice: number | null;
   onBook?: () => void;
+  onShowHistory?: () => void;
   serviceId?: number;
   city?: string;
 }
 
-export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, serviceId, city }: ClinicCardProps) {
+export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, onShowHistory, serviceId, city }: ClinicCardProps) {
   const isCheapest = clinic.is_cheapest;
   const [logoHovered, setLogoHovered] = useState(false);
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscribeEmail, setSubscribeEmail] = useState("");
   const [subscribed, setSubscribed] = useState(false);
+  const [subscribeError, setSubscribeError] = useState<string | null>(null);
   const sourceUrl = buildSourceUrl(clinic);
 
   // Разница цен в процентах относительно минимума
@@ -119,12 +122,23 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, s
           }}
         >
           {clinic.logo_url ? (
-            <Image
+            <img
               src={clinic.logo_url}
               alt={`Логотип ${clinic.name}`}
-              fill
-              style={{ objectFit: "contain", padding: "4px" }}
-              unoptimized
+              style={{ width: "100%", height: "100%", objectFit: "contain", padding: "4px" }}
+              onError={(e) => {
+                e.currentTarget.style.display = "none";
+                const parent = e.currentTarget.parentElement;
+                if (parent) {
+                  const fallback = document.createElement("span");
+                  fallback.style.fontSize = "18px";
+                  fallback.style.fontWeight = "600";
+                  fallback.style.color = "var(--text-secondary)";
+                  fallback.style.letterSpacing = "-0.02em";
+                  fallback.innerText = clinic.name.charAt(0);
+                  parent.appendChild(fallback);
+                }
+              }}
             />
           ) : (
             <span
@@ -380,12 +394,12 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, s
           onSubmit={async (e) => {
             e.preventDefault();
             try {
-              const res = await api.subscribeToPrice(subscribeEmail, serviceId, clinic.id, city || clinic.city);
+              await api.subscribeToPrice(subscribeEmail, serviceId, clinic.id, city || clinic.city);
+              setSubscribeError(null);
               setSubscribed(true);
               setShowSubscribe(false);
-              alert(res.message);
             } catch (err) {
-              alert(err instanceof Error ? err.message : "Ошибка подписки");
+              setSubscribeError(err instanceof Error ? err.message : "Ошибка подписки");
             }
           }}
           style={{ display: "flex", gap: 6, marginBottom: 10 }}
@@ -395,11 +409,17 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, s
             required
             placeholder="Email для уведомлений"
             value={subscribeEmail}
-            onChange={(e) => setSubscribeEmail(e.target.value)}
+            onChange={(e) => {
+              setSubscribeEmail(e.target.value);
+              setSubscribeError(null);
+            }}
             style={{ flex: 1, fontSize: 12, padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}
           />
           <button type="submit" className="btn-solid" style={{ padding: "8px 12px", fontSize: 12 }}>OK</button>
         </form>
+      )}
+      {subscribeError && (
+        <p style={{ fontSize: 11, color: "var(--accent-red)", marginBottom: 8 }}>{subscribeError}</p>
       )}
       {subscribed && (
         <p style={{ fontSize: 11, color: "var(--accent-green)", marginBottom: 8 }}>✓ Подписка на изменение цены активна</p>
@@ -435,13 +455,16 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, s
             }
           }}
         >
-          Записаться (демо)
+          Записаться
         </button>
 
         {serviceId && (
           <button
             type="button"
-            onClick={() => setShowSubscribe(!showSubscribe)}
+            onClick={() => {
+              setShowSubscribe(!showSubscribe);
+              setSubscribeError(null);
+            }}
             aria-label="Подписаться на цену"
             style={{
               padding: "10px 12px",
@@ -455,6 +478,27 @@ export default function ClinicCard({ clinic, rank, minPrice, maxPrice, onBook, s
             }}
           >
             <Bell size={14} />
+          </button>
+        )}
+
+        {onShowHistory && (
+          <button
+            type="button"
+            onClick={onShowHistory}
+            aria-label="История цены"
+            title="История изменения цены"
+            style={{
+              padding: "10px 12px",
+              background: "transparent",
+              border: "var(--border-w) solid var(--border)",
+              borderRadius: "var(--radius-sm)",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+            }}
+          >
+            <History size={14} />
           </button>
         )}
 

@@ -165,6 +165,7 @@ def fetch_doq_city_branches(city_slug: str, city_name: str, doq_city_id: int) ->
                     "rating": rating,
                     "source_id": "doq",
                     "external_id": f"branch_{branch_id}",
+                    "has_online_booking": True,
                 },
                 items=filtered,
             ))

@@ -52,6 +52,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning(f"⚠️  clinic columns migrate: {exc}")
 
+    try:
+        from app.services.legacy_fallback_cleanup import purge_legacy_fallback_prices
+        async with AsyncSessionLocal() as session:
+            cleanup = await purge_legacy_fallback_prices(session)
+        if cleanup.get("raw_deleted") or cleanup.get("prices_deleted"):
+            log.info(
+                "✅ Legacy fallback prices removed: raw=%s, prices=%s",
+                cleanup.get("raw_deleted", 0),
+                cleanup.get("prices_deleted", 0),
+            )
+    except Exception as exc:
+        log.warning(f"⚠️  legacy fallback cleanup: {exc}")
+
     # 2. Проверяем Redis
     try:
         redis = await get_redis()
@@ -69,9 +82,27 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         log.warning(f"⚠️  Не удалось загрузить индекс нормализации: {exc}")
 
+    # 3. Инициализируем и запускаем планировщик парсинга
+    stop_scheduler = None
+    try:
+        from app.services.scheduler import init_schedules, start_scheduler, stop_scheduler as shutdown_scheduler
+
+        await init_schedules()
+        start_scheduler()
+        stop_scheduler = shutdown_scheduler
+        log.info("✅ Планировщик парсеров запущен")
+    except Exception as exc:
+        log.warning(f"⚠️  Не удалось запустить планировщик: {exc}")
+
     yield  # ← приложение работает
 
     log.info("🛑 Завершение работы...")
+    try:
+        if stop_scheduler:
+            stop_scheduler()
+            log.info("✅ Планировщик остановлен")
+    except Exception as exc:
+        log.warning(f"⚠️  Не удалось остановить планировщик: {exc}")
     await close_redis()
     log.info("✅ Redis: соединение закрыто")
 

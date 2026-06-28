@@ -45,33 +45,11 @@ class SunkarScraper(BaseScraper):
                                 source_url=self.source_url
                             ))
         except Exception as e:
-            log.warning("SunkarScraper: не удалось получить данные (%s), используем резервный кэш.", e)
+            log.warning("SunkarScraper: не удалось получить данные (%s).", e)
+            result.errors.append(f"Sunkar: {e}")
 
-        if not items:
-            log.info("SunkarScraper: загрузка резервных данных.")
-            mock_data = [
-                ("Прием терапевта", 5500),
-                ("Прием кардиолога", 6500),
-                ("УЗИ брюшной полости", 5000),
-                ("УЗИ почек", 4000),
-                ("Общий анализ крови", 1800),
-                ("Общий анализ мочи", 800),
-                ("Рентген грудной клетки", 3500),
-                ("Массаж воротниковой зоны", 3000),
-                ("ПЦР диагностика COVID-19", 5500),
-                ("МРТ головного мозга", 18000),
-                ("КТ грудного сегмента", 15000),
-                ("ЭЭГ (электроэнцефалография)", 4500)
-            ]
-            for name, price in mock_data:
-                items.append(ScrapedPrice(
-                    name=name,
-                    price=price,
-                    source_url=self.source_url
-                ))
-                
         result.items, _ = filter_scraped_items(items)
         if not result.items:
-            result.errors.append("Не удалось извлечь данные Sunkar")
+            result.errors.append("Не удалось извлечь реальные данные: Sunkar")
             
         return result

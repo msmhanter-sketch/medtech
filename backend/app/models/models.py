@@ -363,3 +363,65 @@ class NewsletterSubscriber(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     city: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+
+# ─── ParserLog ─────────────────────────────────────────────────────────────────
+
+class ParserLog(Base):
+    """Логирование запусков парсеров и ошибок."""
+    __tablename__ = "parser_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parser_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, index=True, comment="Имя парсера (doq, invitro...)"
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, index=True, comment="success / error"
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(
+        Text, nullable=True, comment="Текст ошибки или Traceback"
+    )
+    records_processed: Mapped[int] = mapped_column(
+        default=0, nullable=False, comment="Сколько записей обработано"
+    )
+    records_inserted: Mapped[int] = mapped_column(
+        default=0, nullable=False, comment="Сколько записей успешно сохранено"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        index=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<ParserLog id={self.id} parser={self.parser_name} status={self.status}>"
+
+
+# ─── ParserSchedule ────────────────────────────────────────────────────────────
+
+class ParserSchedule(Base):
+    """Настройки расписания запусков парсеров."""
+    __tablename__ = "parser_schedules"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    parser_name: Mapped[str] = mapped_column(
+        String(100), unique=True, index=True, nullable=False, comment="ID источника парсера"
+    )
+    interval: Mapped[str] = mapped_column(
+        String(50), nullable=False, default="manual", comment="manual | hourly | twice_daily | daily | weekly"
+    )
+    next_run: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="Время следующего автоматического запуска"
+    )
+    last_run: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True, comment="Время последнего запуска"
+    )
+    is_active: Mapped[bool] = mapped_column(
+        default=True, nullable=False, comment="Флаг активности расписания"
+    )
+
+    def __repr__(self) -> str:
+        return f"<ParserSchedule parser={self.parser_name} interval={self.interval} active={self.is_active}>"
+
+

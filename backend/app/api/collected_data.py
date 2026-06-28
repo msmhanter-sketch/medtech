@@ -6,11 +6,18 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, is_sqlite
 from app.models.models import Clinic, ParsedPriceRow, PriceItem, Service, ServiceCategory
 from app.schemas.collected import CollectedCategory, CollectedDataRow, Currency
 
 router = APIRouter(prefix="/api/data", tags=["data-contract"])
+
+
+def city_equals(column, city: str):
+    normalized = city.strip()
+    if is_sqlite:
+        return func.trim(column) == normalized
+    return func.lower(func.trim(column)) == normalized.lower()
 
 _CONTRACT_UUID_NAMESPACE = UUID("8b47a565-99a2-4f16-8423-f759f0d46244")
 
@@ -131,7 +138,7 @@ async def list_collected_data(
     )
 
     if city:
-        stmt = stmt.where(Clinic.city.ilike(f"%{city}%"))
+        stmt = stmt.where(city_equals(Clinic.city, city))
     if category:
         stmt = stmt.where(ServiceCategory.slug.in_(_CATEGORY_SLUGS[category]))
     if active_only:

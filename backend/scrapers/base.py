@@ -67,6 +67,7 @@ class BaseScraper(ABC):
       "latitude": self.latitude,
       "longitude": self.longitude,
       "rating": self.rating,
+      "has_online_booking": getattr(self, "has_online_booking", False),
     }
 
   def _result(self) -> ScrapeResult:

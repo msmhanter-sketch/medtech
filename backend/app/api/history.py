@@ -9,14 +9,21 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_db
+from app.core.database import get_db, is_sqlite
 from app.models.models import Clinic, PriceItem, Service
 from app.utils.sources import build_source_meta
 
 router = APIRouter(prefix="/api/history", tags=["history"])
+
+
+def city_equals(column, city: str):
+    normalized = city.strip()
+    if is_sqlite:
+        return func.trim(column) == normalized
+    return func.lower(func.trim(column)) == normalized.lower()
 
 
 class PriceHistoryPoint(BaseModel):
@@ -111,7 +118,7 @@ async def list_price_changes(
     if service_id:
         stmt = stmt.where(PriceItem.service_id == service_id)
     if city:
-        stmt = stmt.where(Clinic.city.ilike(f"%{city}%"))
+        stmt = stmt.where(city_equals(Clinic.city, city))
 
     rows = (await db.execute(stmt)).all()
 

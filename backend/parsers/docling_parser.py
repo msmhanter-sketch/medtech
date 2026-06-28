@@ -7,7 +7,7 @@ from typing import List, Dict, Any
 def parse_pdf(filepath: str) -> List[Dict[str, Any]]:
     print(f"Using advanced Docling AI parser for {filepath}...")
     pipeline_options = PdfPipelineOptions()
-    pipeline_options.do_ocr = False
+    pipeline_options.do_ocr = True # Включено распознавание текста с картинок (OCR)
     
     converter = DocumentConverter(
         format_options={

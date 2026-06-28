@@ -53,35 +53,6 @@ export default function ClinicMap({
       maxZoom: 20,
     }).addTo(map);
 
-    // Обработчик события клика по кнопке в поп-апе
-    map.on("popupopen", (e) => {
-      const container = e.popup.getElement();
-      if (container) {
-        const btn = container.querySelector(".popup-book-btn");
-        if (btn) {
-          const handleClick = () => {
-            const clinicId = Number(btn.getAttribute("data-clinic-id"));
-            const clinic = clinics.find((c) => c.id === clinicId);
-            if (clinic) {
-              onBookClinic(clinic);
-            }
-          };
-          btn.addEventListener("click", handleClick);
-          // Сохраняем ссылку для очистки, если нужно
-          (btn as any)._clickListener = handleClick;
-        }
-      }
-    });
-
-    map.on("popupclose", (e) => {
-      const container = e.popup.getElement();
-      if (container) {
-        const btn = container.querySelector(".popup-book-btn");
-        if (btn && (btn as any)._clickListener) {
-          btn.removeEventListener("click", (btn as any)._clickListener);
-        }
-      }
-    });
 
     mapRef.current = map;
 
@@ -91,7 +62,7 @@ export default function ClinicMap({
         mapRef.current = null;
       }
     };
-  }, [city, clinics, onBookClinic, resolvedTheme]);
+  }, [city, resolvedTheme]);
 
   // Обновление слоя при изменении темы
   useEffect(() => {
@@ -172,6 +143,16 @@ export default function ClinicMap({
           minWidth: 240,
         });
 
+      marker.on("popupopen", (event) => {
+        const button = event.popup.getElement()?.querySelector<HTMLButtonElement>(".popup-book-btn");
+        if (button) {
+          L.DomEvent.on(button, "click", (e) => {
+            L.DomEvent.stopPropagation(e);
+            onBookClinic(clinic);
+          });
+        }
+      });
+
       // Обработка наведения на маркер
       marker.on("mouseover", () => {
         onHoverClinic(clinic.id);
@@ -187,7 +168,7 @@ export default function ClinicMap({
     if (bounds.length > 0) {
       map.fitBounds(L.latLngBounds(bounds), { padding: [50, 50] });
     }
-  }, [clinics, city, onHoverClinic]);
+  }, [clinics, city, onBookClinic, onHoverClinic]);
 
   // 3. Синхронизация hovered состояния из списка в маркеры
   useEffect(() => {
@@ -211,7 +192,7 @@ export default function ClinicMap({
   }, [hoveredClinicId]);
 
   return (
-    <div className="map-grid" style={{ position: "relative" }}>
+    <div className="map-grid" style={{ position: "relative", height: "600px", borderRadius: "16px", overflow: "hidden", border: "1px solid var(--border)", boxShadow: "var(--shadow-soft)" }}>
       {/* Стили для кастомных Leaflet маркеров */}
       <style jsx global>{`
         .custom-leaflet-icon-holder {

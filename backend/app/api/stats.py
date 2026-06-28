@@ -46,6 +46,13 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 
     last_updated = await db.scalar(select(func.max(PriceItem.price_date)))
 
+    # Подсчет логов парсеров (ошибки)
+    from app.models.models import ParserLog
+    error_logs = await db.scalar(
+        select(func.count()).select_from(ParserLog).where(ParserLog.status == "error")
+    ) or 0
+    total_logs = await db.scalar(select(func.count()).select_from(ParserLog)) or 0
+
     match_rate = 0.0
     if parsed_total > 0:
         matched = parsed_total - unmatched
@@ -57,10 +64,13 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
         "total_prices": total_prices or 0,
         "total_categories": total_categories or 0,
         "fresh_prices_30d": fresh_prices or 0,
+        "total_cities": len(cities),
         "cities": [{"city": c, "clinics": n} for c, n in cities],
         "sources_loaded": sources,
         "parsed_rows": parsed_total,
         "unmatched_rows": unmatched,
         "match_rate_pct": match_rate,
+        "error_logs": error_logs,
+        "total_logs": total_logs,
         "last_updated": last_updated.isoformat() if last_updated else None,
     }

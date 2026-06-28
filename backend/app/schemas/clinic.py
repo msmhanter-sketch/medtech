@@ -30,6 +30,7 @@ class ClinicRead(ClinicBase):
 
     id: int
     is_active: bool
+    has_online_booking: bool = False
     created_at: datetime
     updated_at: datetime
 
@@ -63,7 +64,8 @@ class ClinicInCompare(BaseModel):
     source_parser: Optional[str] = Field(None, description="ID парсера (invitro, helix, …)")
     source_parser_label: Optional[str] = Field(None, description="Человекочитаемое имя источника")
     official_source_url: Optional[str] = Field(None, description="Официальный URL прайса")
-    
+    has_online_booking: bool = Field(False, description="Доступна онлайн-запись на сайте источника")
+
     # Поле расстояния (вычисляется динамически)
     distance_km: Optional[float] = Field(None, description="Расстояние от пользователя в км")
 
@@ -142,6 +144,13 @@ class ClinicPriceItem(BaseModel):
     currency: str = Field("KZT", description="Валюта")
 
 
+class ServiceCityAvailability(BaseModel):
+    city: str
+    offers_count: int = Field(..., ge=0)
+    min_price: Optional[Decimal] = None
+    max_price: Optional[Decimal] = None
+
+
 class CompareResponse(BaseModel):
     """Ответ эндпоинта сравнения клиник."""
     service: ServiceRead
@@ -150,4 +159,5 @@ class CompareResponse(BaseModel):
     total_clinics: int
     min_price: Optional[Decimal] = None
     max_price: Optional[Decimal] = None
+    available_cities: list[ServiceCityAvailability] = Field(default_factory=list)
     clinics: list[ClinicInCompare]

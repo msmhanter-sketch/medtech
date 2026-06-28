@@ -113,8 +113,24 @@ export default function ClinicPage() {
         <>
           <header className="bento-card" style={{ padding: 28, marginBottom: 24, display: "flex", gap: 20, flexWrap: "wrap" }}>
             {clinic.logo_url && (
-              <div style={{ width: 72, height: 72, borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", position: "relative", flexShrink: 0 }}>
-                <Image src={clinic.logo_url} alt="" fill style={{ objectFit: "contain", padding: 6 }} unoptimized />
+              <div style={{ width: 72, height: 72, borderRadius: 12, border: "1px solid var(--border)", overflow: "hidden", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img
+                  src={clinic.logo_url}
+                  alt=""
+                  style={{ width: "100%", height: "100%", objectFit: "contain", padding: 6 }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = "none";
+                    const parent = e.currentTarget.parentElement;
+                    if (parent) {
+                      const fallback = document.createElement("span");
+                      fallback.style.fontSize = "24px";
+                      fallback.style.fontWeight = "800";
+                      fallback.style.color = "var(--text-secondary)";
+                      fallback.innerText = clinic.name.charAt(0);
+                      parent.appendChild(fallback);
+                    }
+                  }}
+                />
               </div>
             )}
             <div style={{ flex: 1, minWidth: 240 }}>

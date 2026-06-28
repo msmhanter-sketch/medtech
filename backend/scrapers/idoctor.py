@@ -46,32 +46,9 @@ class IDoctorScraper(BaseScraper):
                                 source_url=self.source_url
                             ))
         except Exception as e:
-            log.warning("IDoctorScraper: не удалось получить данные (%s), используем резервный кэш.", e)
+            log.warning("IDoctorScraper: не удалось получить данные (%s).", e)
+            result.errors.append(f"iDoctor: {e}")
 
-        if not items:
-            log.info("IDoctorScraper: загрузка резервных данных для демо.")
-            mock_data = [
-                ("Прием врача-терапевта", 6000),
-                ("Прием врача-кардиолога", 8000),
-                ("Прием врача-гинеколога", 7500),
-                ("Прием врача-невролога", 7000),
-                ("Прием врача-офтальмолога", 6500),
-                ("Прием врача-отоларинголога (ЛОР)", 6000),
-                ("Прием врача-уролога", 7500),
-                ("Прием врача-эндокринолога", 8000),
-                ("Прием врача-дерматолога", 6500),
-                ("Прием врача-гастроэнтеролога", 8000),
-                ("УЗИ брюшной полости", 6500),
-                ("УЗИ малого таза", 6000),
-                ("ЭКГ с расшифровкой", 3000)
-            ]
-            for name, price in mock_data:
-                items.append(ScrapedPrice(
-                    name=name,
-                    price=price,
-                    source_url=self.source_url
-                ))
-                
         # Оставляем минимальную цену для каждой специальности
         by_label = {}
         for item in items:
@@ -80,6 +57,6 @@ class IDoctorScraper(BaseScraper):
                 
         result.items, _ = filter_scraped_items(list(by_label.values()))
         if not result.items:
-            result.errors.append("Не удалось извлечь данные со страницы iDoctor и резервный кэш пуст")
+            result.errors.append("Не удалось извлечь реальные данные: iDoctor")
             
         return result

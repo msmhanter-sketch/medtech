@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import NavHeader from "@/components/NavHeader";
 import Footer from "@/components/Footer";
 import HeroSection from "@/components/HeroSection";
+import FeaturesSection from "@/components/FeaturesSection";
 import CompareResults from "@/components/CompareResults";
 import BookingModal from "@/components/BookingModal";
 import { api, CompareResponse, ServiceSearchResult, SortOrder, ClinicInCompare } from "@/lib/api";
@@ -31,6 +32,7 @@ export default function ClientHome({
   const [priceMin, setPriceMin] = useState<number | undefined>();
   const [priceMax, setPriceMax] = useState<number | undefined>();
   const [verifiedOnly, setVerifiedOnly] = useState(false);
+  const [onlineBookingOnly, setOnlineBookingOnly] = useState(false);
   const [bookingClinic, setBookingClinic] = useState<ClinicInCompare | null>(null);
   const [isBookingOpen, setIsBookingOpen] = useState(false);
 
@@ -39,7 +41,7 @@ export default function ClientHome({
   const fetchCompare = useCallback(async (
     serviceId: number, cityName: string, sortOrder: SortOrder,
     lat?: number, lon?: number,
-    filters?: { minPrice?: number; maxPrice?: number; verifiedOnly?: boolean },
+    filters?: { minPrice?: number; maxPrice?: number; verifiedOnly?: boolean; onlineBookingOnly?: boolean },
   ) => {
     setIsComparing(true);
     setError(null);
@@ -47,7 +49,9 @@ export default function ClientHome({
       const data = await api.compareClinics(
         serviceId, cityName, sortOrder,
         filters?.minPrice ?? priceMin, filters?.maxPrice ?? priceMax,
-        lat ?? userLat, lon ?? userLon, filters?.verifiedOnly ?? verifiedOnly,
+        lat ?? userLat, lon ?? userLon,
+        filters?.verifiedOnly ?? verifiedOnly,
+        filters?.onlineBookingOnly ?? onlineBookingOnly,
       );
       setCompareData(data);
     } catch (err: unknown) {
@@ -56,7 +60,7 @@ export default function ClientHome({
     } finally {
       setIsComparing(false);
     }
-  }, [priceMin, priceMax, verifiedOnly, userLat, userLon]);
+  }, [priceMin, priceMax, verifiedOnly, onlineBookingOnly, userLat, userLon]);
 
   const updateUrlParams = useCallback((serviceId: number | null, city: string, sortOrder: SortOrder) => {
     if (typeof window === "undefined") return;
@@ -74,6 +78,7 @@ export default function ClientHome({
     setPriceMin(undefined);
     setPriceMax(undefined);
     setVerifiedOnly(false);
+    setOnlineBookingOnly(false);
     updateUrlParams(service.id, city, currentSort);
     window.scrollTo({ top: 0, behavior: "smooth" });
     await fetchCompare(service.id, city, currentSort);
@@ -100,7 +105,12 @@ export default function ClientHome({
   }, [lastServiceId, lastCity, updateUrlParams, userLat, userLon, fetchCompare]);
 
   useEffect(() => {
-    if (initialCompareData) {
+    if (initialServiceId === null) {
+      setCompareData(null);
+      setActiveService(null);
+      setLastServiceId(null);
+    } else if (initialCompareData) {
+      setCompareData(initialCompareData);
       setActiveService({
         id: initialCompareData.service.id,
         name: initialCompareData.service.name,
@@ -108,23 +118,27 @@ export default function ClientHome({
         category_name: "",
         description: initialCompareData.service.description,
       });
+      setLastServiceId(initialCompareData.service.id);
     }
-  }, [initialCompareData]);
+  }, [initialServiceId, initialCompareData]);
 
   return (
     <>
       {!showResults && <NavHeader city={lastCity} />}
 
       {!showResults && (
-        <HeroSection
-          city={lastCity}
-          onCityChange={(city) => {
-            setLastCity(city);
-            updateUrlParams(lastServiceId, city, sort);
-          }}
-          onSearch={handleSearch}
-          activeService={activeService}
-        />
+        <>
+          <HeroSection
+            city={lastCity}
+            onCityChange={(city) => {
+              setLastCity(city);
+              updateUrlParams(lastServiceId, city, sort);
+            }}
+            onSearch={handleSearch}
+            activeService={activeService}
+          />
+          <FeaturesSection />
+        </>
       )}
 
       {error && (
@@ -140,17 +154,23 @@ export default function ClientHome({
           sort={sort}
           onSortChange={handleSortChange}
           city={lastCity}
+          onCityChange={(newCity) => {
+            setLastCity(newCity);
+            updateUrlParams(lastServiceId, newCity, sort);
+            if (lastServiceId) fetchCompare(lastServiceId, newCity, sort);
+          }}
           onFiltersApply={(filters) => {
             setPriceMin(filters.minPrice);
             setPriceMax(filters.maxPrice);
             setVerifiedOnly(filters.verifiedOnly);
+            setOnlineBookingOnly(filters.onlineBookingOnly);
             if (lastServiceId && lastCity) fetchCompare(lastServiceId, lastCity, sort, userLat, userLon, filters);
           }}
           onBookClinic={(clinic) => { setBookingClinic(clinic); setIsBookingOpen(true); }}
         />
       )}
 
-      {!showResults && <Footer variant="simple" />}
+      {!showResults && <Footer variant="full" city={lastCity} />}
 
       <BookingModal
         isOpen={isBookingOpen}

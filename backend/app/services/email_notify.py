@@ -1,4 +1,4 @@
-"""Отправка email (SMTP) или запись в лог для демо без SMTP."""
+"""Отправка email (SMTP) или запись в лог в локальный outbox без SMTP."""
 import logging
 import os
 import smtplib
