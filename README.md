@@ -45,46 +45,32 @@
 
 ### Требования
 
-- **Python 3.11+**
-- **Node.js 18+** и npm
+- **Python 3.11+** — [скачать](https://www.python.org/downloads/)
+- **Node.js 18+** — [скачать](https://nodejs.org/)
 - Git
 
-### 1. Клонировать репозиторий
+### Шаг 1 — Клонировать репозиторий
 
 ```bash
 git clone https://github.com/msmhanter-sketch/medtech.git
 cd medtech
 ```
 
-### 2. Запустить бэкенд (FastAPI)
+### Шаг 2 — Бэкенд (FastAPI) — **запускать из папки `backend/`**
 
 ```bash
 cd backend
-
-# Создать виртуальное окружение
 python -m venv venv
-
-# Активировать (Windows)
 venv\Scripts\activate
-
-# Активировать (macOS / Linux)
-# source venv/bin/activate
-
-# Установить зависимости
 pip install -r requirements.txt
-
-# Запустить API
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-| | URL |
-|-|-----|
-| ⚙️ API | http://localhost:8000 |
-| 📖 Swagger UI | http://localhost:8000/docs |
+> Для macOS/Linux активация: `source venv/bin/activate`
 
-### 3. Запустить фронтенд (Next.js)
+Бэкенд готов: **http://localhost:8000** | Swagger: **http://localhost:8000/docs**
 
-> В новом терминале:
+### Шаг 3 — Фронтенд (Next.js) — **в новом терминале, из папки `frontend/`**
 
 ```bash
 cd frontend
@@ -92,12 +78,9 @@ npm install
 npm run dev
 ```
 
-| | URL |
-|-|-----|
-| 🌐 Сайт | http://localhost:3000 |
-| 🛡️ Админ | http://localhost:3000/admin |
+Сайт: **http://localhost:3000** | Админка: **http://localhost:3000/admin**
 
-> **База данных** уже заполнена реальными данными (`backend/medtech.db`) — ничего дополнительно настраивать не нужно.
+> **База данных** уже заполнена реальными данными — ничего дополнительно делать не нужно.
 
 ---
 
