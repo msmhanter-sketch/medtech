@@ -56,8 +56,32 @@ git clone https://github.com/msmhanter-sketch/medtech.git
 cd medtech
 ```
 
-### Шаг 2 — Бэкенд (FastAPI) — **запускать из папки `backend/`**
+### Шаг 2 — Запустить одной командой (Windows)
 
+```bat
+start.bat
+```
+
+Или просто **дважды кликнуть** на `start.bat` в папке проекта.
+
+Скрипт сам:
+- Создаст Python venv и установит зависимости
+- Установит npm пакеты (если нужно)
+- Откроет бэкенд и фронтенд в двух окнах
+
+| Сервис | URL |
+|--------|-----|
+| 🌐 Сайт | http://localhost:3000 |
+| ⚙️ Swagger API | http://localhost:8000/docs |
+| 🛡️ Админ | http://localhost:3000/admin |
+
+> **База данных** уже заполнена реальными данными — ничего дополнительно делать не нужно.
+
+---
+
+### Ручной запуск (если нужно)
+
+**Терминал 1 — бэкенд:**
 ```bash
 cd backend
 python -m venv venv
@@ -66,21 +90,12 @@ pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
-> Для macOS/Linux активация: `source venv/bin/activate`
-
-Бэкенд готов: **http://localhost:8000** | Swagger: **http://localhost:8000/docs**
-
-### Шаг 3 — Фронтенд (Next.js) — **в новом терминале, из папки `frontend/`**
-
+**Терминал 2 — фронтенд:**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-
-Сайт: **http://localhost:3000** | Админка: **http://localhost:3000/admin**
-
-> **База данных** уже заполнена реальными данными — ничего дополнительно делать не нужно.
 
 ---
 
