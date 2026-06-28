@@ -35,7 +35,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ```bash
 cd frontend
-npm install
+npm install --legacy-peer-deps
 npm run dev
 ```
 
