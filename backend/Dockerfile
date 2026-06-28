@@ -2,8 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
+# Минимальные системные зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libreoffice-writer \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -11,7 +12,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 
+# Создаём папку для БД и данных
+RUN mkdir -p /app/data
+
+# Копируем entrypoint
+RUN chmod +x /app/docker-entrypoint.sh
+
 ENV PYTHONPATH=/app
 EXPOSE 8000
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

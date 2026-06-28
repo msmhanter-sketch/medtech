@@ -8,12 +8,14 @@ backend/.pytest_cache/
 __pycache__/
 *.pyc
 
-# Local databases
-*.db
+# Local databases — EXCEPT the seeded DB for Docker
 *.db-shm
 *.db-wal
 backend/logs/
 
+# Allow the main DB (needed for Docker cold start)
+# medtech.db is tracked via Git LFS
+# backend/medtech.db
 
 # Node dependencies and build
 frontend/node_modules/
@@ -28,3 +30,6 @@ frontend/out/
 *.njsproj
 *.sln
 *.swp
+
+# Data dumps (too large)
+data/
